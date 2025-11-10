@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "docker-mcp": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["C:\\Users\\IswaryaK\\dockermcp-python\\docker-mcp\\docker-mcp\\server.py"],
+      "cwd": "C:\\Users\\IswaryaK\\dockermcp-python\\docker-mcp\\docker-mcp"
+    }
+  }
+}
