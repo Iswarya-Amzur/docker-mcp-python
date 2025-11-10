@@ -9,6 +9,7 @@ from docker_tools.dockerfile_generator import generate_dockerfile
 from docker_tools.docker_builder import build_docker_image
 from docker_tools.test_runner import run_tests_in_container
 from docker_tools.error_fixer import fix_containerization_errors
+from docker_tools.multi_service_handler import dockerize_full_project, detect_services
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -185,6 +186,45 @@ def get_container_logs(container_name: str, tail: Optional[int] = None) -> str:
         return result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
     except Exception as e:
         return f"Error retrieving logs: {str(e)}"
+
+# Tool 7: Dockerize Full Project (Backend + Frontend)
+@mcp.tool()
+def dockerize_project(project_root: str) -> str:
+    """
+    Automatically detect and dockerize all services (backend, frontend, etc.) in a project.
+    Creates Dockerfiles for each service and a unified docker-compose.yml file.
+    
+    Args:
+        project_root: Root directory of the project containing backend/frontend folders
+    
+    Returns:
+        Summary of dockerization process including created files and next steps
+    """
+    try:
+        logger.info(f"Dockerizing full project at {project_root}")
+        result = dockerize_full_project(project_root)
+        return result
+    except Exception as e:
+        return f"Error dockerizing project: {str(e)}"
+
+# Tool 8: Detect Services in Project
+@mcp.tool()
+def detect_project_services(project_root: str) -> str:
+    """
+    Detect all services (backend, frontend, api, client, etc.) in a project directory.
+    
+    Args:
+        project_root: Root directory of the project
+    
+    Returns:
+        JSON string with detected services and their details
+    """
+    try:
+        logger.info(f"Detecting services in {project_root}")
+        services = detect_services(project_root)
+        return json.dumps(services, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e), "status": "failed"})
 
 if __name__ == "__main__":
     # Run MCP server with stdio transport (works with Claude Desktop, etc.)
