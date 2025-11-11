@@ -4,6 +4,8 @@ import json
 import logging
 import time
 import webbrowser
+import re
+import requests
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -988,6 +990,366 @@ def restart_monitoring_services(project_root: str, services: List[str] = None) -
             results["status"] = "partial" if results["restarted"] else "error"
     
     return results
+
+
+def check_containers_running(project_root: str) -> Dict:
+    """
+    Check if application containers are running.
+    
+    Args:
+        project_root: Root directory of the project
+        
+    Returns:
+        Dictionary with container status information
+    """
+    results = {
+        "status": "unknown",
+        "running_containers": [],
+        "stopped_containers": [],
+        "app_containers": [],
+        "monitoring_containers": []
+    }
+    
+    try:
+        # Get all containers (running and stopped)
+        result = subprocess.run(
+            ["docker", "ps", "-a", "--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"],
+            capture_output=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=10
+        )
+        
+        if result.returncode == 0:
+            for line in result.stdout.strip().split('\n'):
+                if line:
+                    parts = line.split('\t')
+                    if len(parts) >= 2:
+                        name, status = parts[0], parts[1]
+                        
+                        # Categorize containers
+                        if "Up" in status:
+                            results["running_containers"].append(name)
+                        else:
+                            results["stopped_containers"].append(name)
+                        
+                        # Identify monitoring vs app containers
+                        if name in ["loki", "promtail", "grafana"]:
+                            results["monitoring_containers"].append(name)
+                        else:
+                            results["app_containers"].append(name)
+            
+            # Determine overall status
+            if results["running_containers"]:
+                results["status"] = "running"
+            elif results["stopped_containers"]:
+                results["status"] = "stopped"
+            else:
+                results["status"] = "no_containers"
+        
+        return results
+        
+    except Exception as e:
+        results["status"] = "error"
+        results["error"] = str(e)
+        return results
+
+
+def start_application_containers(project_root: str) -> Dict:
+    """
+    Start application containers if they're not running.
+    
+    Args:
+        project_root: Root directory of the project
+        
+    Returns:
+        Dictionary with startup results
+    """
+    results = {
+        "status": "unknown",
+        "started": [],
+        "failed": [],
+        "message": ""
+    }
+    
+    try:
+        # Try to start with docker-compose
+        compose_files = ["docker-compose.yml", "docker-compose.yaml"]
+        compose_file = None
+        
+        for cf in compose_files:
+            if os.path.exists(os.path.join(project_root, cf)):
+                compose_file = cf
+                break
+        
+        if compose_file:
+            logger.info(f"Starting containers with {compose_file}")
+            result = subprocess.run(
+                ["docker-compose", "-f", compose_file, "up", "-d"],
+                cwd=project_root,
+                capture_output=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=120
+            )
+            
+            if result.returncode == 0:
+                results["status"] = "success"
+                results["message"] = "Application containers started successfully"
+                # Wait a bit for containers to initialize
+                time.sleep(5)
+            else:
+                results["status"] = "error"
+                results["message"] = f"Failed to start containers: {result.stderr}"
+        else:
+            results["status"] = "error"
+            results["message"] = "No docker-compose.yml found"
+        
+        return results
+        
+    except Exception as e:
+        results["status"] = "error"
+        results["message"] = f"Error starting containers: {str(e)}"
+        return results
+
+
+def smart_dockerize_and_show_logs(project_root: str, auto_fix: bool = True) -> str:
+    """
+    Intelligent workflow: Analyze app, check/start containers, validate monitoring,
+    launch Grafana, verify logs are showing, and auto-fix any issues.
+    
+    This is the main orchestration function that handles user requests like:
+    - "dockerize my application and show me the logs in grafana dashboard"
+    - "show me the logs of this application"
+    
+    Args:
+        project_root: Root directory of the project
+        auto_fix: Automatically fix issues if found (default: True)
+        
+    Returns:
+        Comprehensive report with all steps and final status
+    """
+    report = "🚀 **Smart Dockerization & Log Monitoring**\n\n"
+    report += "=" * 60 + "\n\n"
+    
+    # STEP 1: Analyze application
+    report += "**STEP 1: Analyzing Application...**\n\n"
+    try:
+        from docker_tools.analyzer import analyze_application
+        analysis = analyze_application(project_root)
+        
+        report += f"📁 Application Type: {analysis.get('app_type', 'unknown')}\n"
+        if analysis.get('dependencies'):
+            report += f"📦 Dependencies: {len(analysis['dependencies'])} packages\n"
+        if analysis.get('entry_point'):
+            report += f"🎯 Entry Point: {analysis['entry_point']}\n"
+        report += "✅ Analysis complete\n\n"
+    except Exception as e:
+        report += f"⚠️  Analysis failed: {str(e)}\n"
+        report += "Continuing with default settings...\n\n"
+    
+    # STEP 2: Check if containers are running
+    report += "=" * 60 + "\n"
+    report += "**STEP 2: Checking Container Status...**\n\n"
+    
+    container_status = check_containers_running(project_root)
+    
+    if container_status["app_containers"]:
+        report += f"📦 Found {len(container_status['app_containers'])} application container(s)\n"
+        report += f"✅ Running: {len([c for c in container_status['app_containers'] if c in container_status['running_containers']])}\n"
+        report += f"⏸️  Stopped: {len([c for c in container_status['app_containers'] if c in container_status['stopped_containers']])}\n\n"
+    else:
+        report += "⚠️  No application containers found\n"
+        report += "Will attempt to dockerize the application...\n\n"
+    
+    # If no containers or they're stopped, start them
+    if container_status["status"] != "running" or not container_status["app_containers"]:
+        report += "**Starting/Creating Containers...**\n\n"
+        
+        # Check if docker-compose exists, if not, dockerize first
+        if not os.path.exists(os.path.join(project_root, "docker-compose.yml")):
+            report += "Creating docker-compose setup...\n"
+            try:
+                from docker_tools.multi_service_handler import dockerize_full_project
+                dockerize_result = dockerize_full_project(project_root)
+                report += "✅ Docker setup created\n\n"
+            except Exception as e:
+                report += f"⚠️  Dockerization partial: {str(e)}\n\n"
+        
+        # Start containers
+        start_result = start_application_containers(project_root)
+        if start_result["status"] == "success":
+            report += f"✅ {start_result['message']}\n\n"
+        else:
+            report += f"⚠️  {start_result['message']}\n\n"
+    else:
+        report += "✅ Application containers are running\n\n"
+    
+    # STEP 3: Setup/Check Monitoring Stack
+    report += "=" * 60 + "\n"
+    report += "**STEP 3: Setting Up Monitoring Stack...**\n\n"
+    
+    # Check if monitoring is already setup
+    monitoring_exists = os.path.exists(os.path.join(project_root, "docker-compose.monitoring.yml"))
+    
+    if not monitoring_exists:
+        report += "Setting up Grafana + Loki + Promtail...\n"
+        try:
+            from docker_tools.multi_service_handler import detect_services
+            detected = detect_services(project_root)
+            service_list = list(detected.keys()) if detected else ["app"]
+            
+            monitoring_result = setup_complete_monitoring(project_root, service_list)
+            report += "✅ Monitoring stack created\n\n"
+        except Exception as e:
+            report += f"⚠️  Monitoring setup issue: {str(e)}\n\n"
+    else:
+        report += "✅ Monitoring stack already configured\n"
+        
+        # Ensure monitoring containers are running
+        monitoring_containers = ["loki", "promtail", "grafana"]
+        monitoring_running = all(c in container_status["running_containers"] for c in monitoring_containers)
+        
+        if not monitoring_running:
+            report += "Starting monitoring containers...\n"
+            try:
+                result = subprocess.run(
+                    ["docker-compose", "-f", "docker-compose.monitoring.yml", "up", "-d"],
+                    cwd=project_root,
+                    capture_output=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    timeout=60
+                )
+                if result.returncode == 0:
+                    report += "✅ Monitoring containers started\n"
+                    time.sleep(5)  # Wait for startup
+                else:
+                    report += f"⚠️  Failed to start monitoring: {result.stderr[:200]}\n"
+            except Exception as e:
+                report += f"⚠️  Error starting monitoring: {str(e)}\n"
+        report += "\n"
+    
+    # STEP 4: Validate Log Flow
+    report += "=" * 60 + "\n"
+    report += "**STEP 4: Validating Log Flow (Loki ← Promtail)...**\n\n"
+    
+    diagnostics = diagnose_monitoring_stack(project_root)
+    
+    # Show status
+    loki_ready = diagnostics["loki"].get("loki_ready", False)
+    promtail_ready = diagnostics["promtail"].get("promtail_ready", False)
+    logs_flowing = diagnostics["logs"].get("receiving_logs", False)
+    
+    report += f"{'✅' if loki_ready else '❌'} Loki: {'Ready' if loki_ready else 'Not Ready'}\n"
+    report += f"{'✅' if promtail_ready else '❌'} Promtail: {'Ready' if promtail_ready else 'Not Ready'}\n"
+    report += f"{'✅' if logs_flowing else '❌'} Log Flow: {'Active' if logs_flowing else 'No Logs Detected'}\n\n"
+    
+    # Auto-fix if issues found
+    if auto_fix and (not loki_ready or not promtail_ready or not logs_flowing):
+        report += "**Auto-Fixing Issues...**\n\n"
+        
+        # Fix Promtail config
+        fix_result = fix_promtail_config(project_root)
+        if fix_result["fixes"]:
+            for fix in fix_result["fixes"]:
+                report += f"  🔧 {fix}\n"
+            
+            # Restart services
+            report += "\nRestarting monitoring services...\n"
+            restart_result = restart_monitoring_services(project_root, ["promtail", "loki"])
+            
+            if restart_result["status"] == "success":
+                report += "✅ Services restarted\n"
+                time.sleep(10)  # Wait for stabilization
+                
+                # Re-check
+                diagnostics_after = diagnose_monitoring_stack(project_root)
+                logs_flowing = diagnostics_after["logs"].get("receiving_logs", False)
+                
+                if logs_flowing:
+                    report += "✅ Logs are now flowing to Loki!\n\n"
+                else:
+                    report += "⚠️  Logs still not flowing. Manual check needed.\n\n"
+            else:
+                report += "⚠️  Service restart had issues\n\n"
+        else:
+            report += "⚠️  No automatic fixes available\n"
+            report += "Manual intervention may be required\n\n"
+    
+    # STEP 5: Launch Grafana Dashboard
+    report += "=" * 60 + "\n"
+    report += "**STEP 5: Launching Grafana Dashboard...**\n\n"
+    
+    try:
+        webbrowser.open("http://localhost:3001")
+        report += "✅ Grafana opened in browser: http://localhost:3001\n"
+        report += "   Username: admin\n"
+        report += "   Password: admin\n\n"
+    except Exception as e:
+        report += f"⚠️  Could not auto-open browser: {str(e)}\n"
+        report += "   Please open manually: http://localhost:3001\n\n"
+    
+    # STEP 6: Verify Logs are Visible
+    report += "=" * 60 + "\n"
+    report += "**STEP 6: Verifying Logs in Grafana...**\n\n"
+    
+    if logs_flowing:
+        log_count = diagnostics["logs"].get("log_count", 0)
+        report += f"✅ SUCCESS! Loki has {log_count} log entries\n"
+        report += "   Your logs should be visible in Grafana dashboard\n\n"
+        
+        # Show sample of recent logs
+        try:
+            logs_result = fetch_logs_from_loki("http://localhost:3100", '{job="docker"}', 5)
+            if logs_result["status"] == "success" and logs_result["logs"]:
+                report += "**Sample Recent Logs:**\n"
+                for log in logs_result["logs"][:3]:
+                    log_text = log["log"][:100]
+                    report += f"  • {log_text}...\n"
+                report += "\n"
+        except:
+            pass
+    else:
+        report += "⚠️  No logs detected in Loki yet\n"
+        report += "   This could mean:\n"
+        report += "   1. Application containers are not generating logs\n"
+        report += "   2. Promtail is not collecting logs\n"
+        report += "   3. Configuration needs adjustment\n\n"
+        
+        if not auto_fix:
+            report += "💡 Try running with auto_fix=True to attempt automatic fixes\n\n"
+    
+    # FINAL SUMMARY
+    report += "=" * 60 + "\n"
+    report += "**📊 FINAL STATUS**\n"
+    report += "=" * 60 + "\n\n"
+    
+    if logs_flowing:
+        report += "✅ **ALL SYSTEMS OPERATIONAL**\n\n"
+        report += "Your application is:\n"
+        report += "  ✅ Dockerized and running\n"
+        report += "  ✅ Monitored by Grafana + Loki + Promtail\n"
+        report += "  ✅ Logs are flowing and visible\n\n"
+        report += "**Next Steps:**\n"
+        report += "  1. Open Grafana: http://localhost:3001\n"
+        report += "  2. Navigate to Dashboards → Application Logs\n"
+        report += "  3. View real-time logs from your services\n"
+    else:
+        report += "⚠️  **SETUP COMPLETE BUT LOGS NOT FLOWING**\n\n"
+        report += "**Recommendations:**\n"
+        report += "  1. Check if application containers are generating logs:\n"
+        report += "     docker logs <container_name>\n"
+        report += "  2. Verify Promtail is running:\n"
+        report += "     docker logs promtail\n"
+        report += "  3. Check Promtail targets:\n"
+        report += "     curl http://localhost:9080/targets\n"
+        report += "  4. Review Loki connection:\n"
+        report += "     docker logs loki\n"
+    
+    report += "\n" + "=" * 60 + "\n"
+    
+    return report
 
 
 def validate_and_fix_monitoring(project_root: str) -> str:

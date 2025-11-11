@@ -24,7 +24,8 @@ from docker_tools.logging_monitor import (
     suggest_fixes_for_errors,
     launch_grafana_dashboard,
     validate_and_fix_monitoring,
-    diagnose_monitoring_stack
+    diagnose_monitoring_stack,
+    smart_dockerize_and_show_logs
 )
 
 # Configure logging
@@ -761,6 +762,45 @@ def validate_monitoring(project_root: str) -> str:
         return result
     except Exception as e:
         return f"Error validating monitoring: {str(e)}"
+
+# Tool 20: Smart Dockerize and Show Logs (Intelligent Workflow)
+@mcp.tool()
+def show_app_logs(project_root: str, auto_fix: Optional[bool] = None) -> str:
+    """
+    🎯 PRIMARY TOOL: Intelligent end-to-end workflow for "show me the logs" requests.
+    
+    This tool does EVERYTHING automatically:
+    1. Analyzes your application structure
+    2. Checks if containers are running (starts them if needed)
+    3. Sets up monitoring (Grafana + Loki + Promtail) if not already configured
+    4. Validates that Loki is receiving logs from Promtail
+    5. Auto-fixes common issues (config, connections, service restarts)
+    6. Launches Grafana dashboard in your browser
+    7. Verifies logs are actually visible and shows samples
+    
+    USE THIS WHEN USER SAYS:
+    - "dockerize my application and show me the logs in grafana dashboard"
+    - "show me the logs of this application"
+    - "show logs in grafana"
+    - "monitor my application"
+    - Any similar request about viewing application logs
+    
+    Args:
+        project_root: Root directory of the project/application
+        auto_fix: Automatically fix issues if found (default: True)
+    
+    Returns:
+        Comprehensive report with all steps, status, and final results
+    """
+    try:
+        logger.info(f"Running smart dockerize and show logs for {project_root}")
+        result = smart_dockerize_and_show_logs(
+            project_root,
+            auto_fix if auto_fix is not None else True
+        )
+        return result
+    except Exception as e:
+        return f"Error in smart workflow: {str(e)}"
 
 if __name__ == "__main__":
     # Run MCP server with stdio transport (works with Claude Desktop, etc.)

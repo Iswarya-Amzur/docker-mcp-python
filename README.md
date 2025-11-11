@@ -30,6 +30,7 @@ A Model Context Protocol (MCP) server that provides Docker containerization tool
 17. **open_grafana** - Launch Grafana dashboard in browser
 18. **dockerize_and_monitor** - Complete workflow: dockerize + monitor + validate
 19. **validate_monitoring** - Validate Loki/Promtail connection and auto-fix issues
+20. **show_app_logs** - 🎯 SMART WORKFLOW: Complete end-to-end solution (analyze → dockerize → monitor → validate → launch → verify)
 
 ## Installation
 
