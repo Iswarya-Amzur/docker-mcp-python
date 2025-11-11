@@ -244,30 +244,30 @@ def test_application_e2e(
     show_browser: Optional[bool] = None
 ) -> str:
     """
-    Launch the dockerized application in a browser and run end-to-end Playwright tests.
-    Opens the application in a real browser window (like Playwright MCP) for visual testing.
-    This tool automates: docker-compose up, wait for services, launch browser, run tests, cleanup.
+    Launch the dockerized application in a browser and run end-to-end tests.
+    PRIMARY ACTION: Opens the application in a real browser window for you to see and interact with.
+    This is the main way to test your dockerized app - it launches the browser automatically!
     
     Args:
         project_root: Root directory with docker-compose.yml
         backend_port: Backend service port (default: 8000)
         frontend_port: Frontend service port (default: 3000)
-        cleanup: Stop services after tests (default: True)
-        headless: Run browser in headless mode (default: False - shows browser)
-        show_browser: Launch browser to show running application (default: True)
+        cleanup: Stop services after browser testing (default: False - keeps running)
+        headless: Run browser in headless mode (default: False - SHOWS browser window)
+        show_browser: Launch browser to show running application (default: True - ALWAYS ON)
     
     Returns:
-        Complete test report with results and screenshot
+        Test report with browser launch status and running service URLs
     """
     try:
-        logger.info(f"Running E2E tests for {project_root}")
+        logger.info(f"Launching and testing application at {project_root}")
         result = launch_and_test(
             project_root,
             backend_port or 8000,
             frontend_port or 3000,
-            cleanup if cleanup is not None else True,
-            headless if headless is not None else False,
-            show_browser if show_browser is not None else True
+            cleanup if cleanup is not None else False,  # Keep running by default
+            headless if headless is not None else False,  # Show browser by default
+            show_browser if show_browser is not None else True  # Always launch browser
         )
         return result
     except Exception as e:

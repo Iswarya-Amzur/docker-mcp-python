@@ -562,7 +562,7 @@ def run_interactive_tests(project_root: str, frontend_url: str = "http://localho
 
 
 def launch_and_test(project_root: str, backend_port: int = 8000, 
-                   frontend_port: int = 3000, cleanup: bool = True,
+                   frontend_port: int = 3000, cleanup: bool = False,
                    headless: bool = False, show_browser: bool = True) -> str:
     """
     Complete workflow: Start docker-compose, wait for services, launch browser, run tests, cleanup.
@@ -603,12 +603,12 @@ def launch_and_test(project_root: str, backend_port: int = 8000,
     
     report += f"✅ Services ready: {wait_result['services']}\n\n"
     
-    # Step 3: Launch browser and show application
+    # Step 3: Launch browser and show application (PRIMARY ACTION)
+    report += "**Step 3: Launching application in browser...**\n"
+    frontend_url = f"http://localhost:{frontend_port}"
+    backend_url = f"http://localhost:{backend_port}"
+    
     if show_browser:
-        report += "**Step 3: Launching application in browser...**\n"
-        frontend_url = f"http://localhost:{frontend_port}"
-        backend_url = f"http://localhost:{backend_port}"
-        
         try:
             # Run interactive tests with browser
             interactive_results = run_interactive_tests(
@@ -620,9 +620,14 @@ def launch_and_test(project_root: str, backend_port: int = 8000,
             
             if interactive_results["status"] == "error":
                 report += f"❌ {interactive_results['message']}\n"
+                report += f"\n💡 Tip: Make sure Playwright is installed:\n"
+                report += f"   pip install playwright\n"
+                report += f"   playwright install\n"
             else:
-                report += f"🌐 Application launched at: {frontend_url}\n"
-                report += f"📊 Tests completed: {interactive_results['passed']}/{interactive_results['total']} passed\n\n"
+                report += f"✅ Browser launched successfully!\n"
+                report += f"🌐 Application URL: {frontend_url}\n"
+                report += f"�️  Backend URL: {backend_url}\n\n"
+                report += f"📊 Quick Tests: {interactive_results['passed']}/{interactive_results['total']} passed\n\n"
                 
                 for test in interactive_results.get("tests", []):
                     status_icon = "✅" if test["status"] == "passed" else "❌" if test["status"] == "failed" else "⚠️"
@@ -636,47 +641,61 @@ def launch_and_test(project_root: str, backend_port: int = 8000,
                 
                 if "screenshot" in interactive_results:
                     report += f"\n📸 Screenshot saved: {interactive_results['screenshot']}\n"
+                
+                report += f"\n💡 The application is now running in your browser!\n"
+                report += f"   Frontend: {frontend_url}\n"
+                report += f"   Backend: {backend_url}\n"
         
         except Exception as e:
             report += f"❌ Error launching browser: {str(e)}\n"
+            report += f"\n💡 Install Playwright: pip install playwright && playwright install\n"
+    else:
+        report += f"⚠️  Browser launch disabled (show_browser=False)\n"
+        report += f"   Frontend URL: {frontend_url}\n"
+        report += f"   Backend URL: {backend_url}\n"
     
-    # Step 4: Check for additional test files
-    report += "\n**Step 4: Running additional tests...**\n"
+    # Step 4: Check for additional test files (OPTIONAL - only if test files exist)
     test_dir = os.path.join(project_root, "e2e-tests")
     
     if not os.path.exists(test_dir):
-        report += "⚠️  No e2e-tests directory found. Generating test template...\n"
-        generate_playwright_test_template(
-            project_root,
-            f"http://localhost:{backend_port}",
-            f"http://localhost:{frontend_port}"
-        )
-        report += f"✅ Test template created at: {test_dir}\n"
-        report += "📝 Run 'npm install' in e2e-tests directory, then run tests again.\n\n"
+        # Only mention test template availability, don't auto-generate
+        report += f"\n💡 **Optional:** Create automated test suite\n"
+        report += f"   Run: create_playwright_tests(project_root=\"{project_root}\")\n"
     else:
-        # Run Playwright tests
+        report += "\n**Step 4: Running additional automated tests...**\n"
+        # Run Playwright tests if they exist
         test_path = os.path.join(test_dir, "tests")
         if os.path.exists(test_path):
             test_result = run_playwright_tests(test_path, test_dir)
             
             if test_result["status"] == "success":
-                report += "✅ All tests passed!\n"
+                report += "✅ All automated tests passed!\n"
                 report += f"\n**Test Output:**\n```\n{test_result['stdout']}\n```\n"
             else:
-                report += f"❌ Tests failed (exit code: {test_result.get('exit_code')})\n"
+                report += f"⚠️  Some automated tests failed\n"
                 report += f"\n**Test Output:**\n```\n{test_result.get('stdout', '')}\n```\n"
                 if test_result.get('stderr'):
                     report += f"\n**Errors:**\n```\n{test_result['stderr']}\n```\n"
         else:
-            report += f"⚠️  No tests found in {test_path}\n"
+            report += f"ℹ️  No additional test files found\n"
     
-    # Step 5: Cleanup
+    # Step 5: Cleanup (optional)
     if cleanup:
-        report += "\n**Step 5: Cleaning up...**\n"
+        report += "\n**Step 5: Stopping services...**\n"
         stop_result = stop_docker_compose(project_root)
         report += "✅ Services stopped\n" if stop_result["status"] == "success" else "⚠️  Cleanup warning\n"
+        report += "\n**Application closed** 🎉\n"
     else:
-        report += "\n**Services still running** (cleanup=False)\n"
+        report += "\n" + "="*60 + "\n"
+        report += "🚀 **APPLICATION IS RUNNING!**\n"
+        report += "="*60 + "\n\n"
+        report += f"Your dockerized application is now live:\n\n"
+        report += f"   🌐 Frontend: http://localhost:{frontend_port}\n"
+        report += f"   🔧 Backend:  http://localhost:{backend_port}\n\n"
+        report += f"The services will continue running in Docker.\n"
+        report += f"Open your browser and visit the URLs above!\n\n"
+        report += f"To stop the services later, run:\n"
+        report += f"   stop_services(project_root=\"{project_root}\")\n"
+        report += "\n" + "="*60 + "\n"
     
-    report += "\n**Test run complete!** 🎉\n"
     return report
