@@ -802,6 +802,10 @@ def show_app_logs(project_root: str, auto_fix: Optional[bool] = None) -> str:
     except Exception as e:
         return f"Error in smart workflow: {str(e)}"
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the MCP server"""
     # Run MCP server with stdio transport (works with Claude Desktop, etc.)
     mcp.run(transport="stdio")
+
+if __name__ == "__main__":
+    main()

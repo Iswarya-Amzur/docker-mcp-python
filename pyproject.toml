@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docker-mcp-server"
+version = "1.0.0"
+description = "MCP server for Docker containerization with intelligent monitoring"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Iswarya Amzur", email = "your.email@example.com"}
+]
+keywords = ["mcp", "docker", "containerization", "monitoring", "grafana", "loki"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+
+dependencies = [
+    "fastmcp>=0.1.0",
+    "docker>=7.0.0",
+    "playwright>=1.40.0",
+    "requests>=2.31.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Iswarya-Amzur/docker-mcp-python"
+Documentation = "https://github.com/Iswarya-Amzur/docker-mcp-python/blob/main/README.md"
+Repository = "https://github.com/Iswarya-Amzur/docker-mcp-python"
+"Bug Tracker" = "https://github.com/Iswarya-Amzur/docker-mcp-python/issues"
+
+[project.scripts]
+docker-mcp = "server:main"
+docker-mcp-install = "install:main"
+
+[tool.setuptools]
+package-dir = {"" = "docker-mcp"}
+packages = ["docker_tools"]
+
+[tool.setuptools.package-data]
+"*" = ["*.md", "*.txt"]
