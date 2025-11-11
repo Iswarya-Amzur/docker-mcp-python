@@ -17,6 +17,13 @@ from docker_tools.e2e_tester import (
     stop_docker_compose,
     run_playwright_tests
 )
+from docker_tools.logging_monitor import (
+    setup_complete_monitoring,
+    fetch_logs_from_loki,
+    analyze_logs_for_errors,
+    suggest_fixes_for_errors,
+    launch_grafana_dashboard
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -422,6 +429,240 @@ Browser window was kept open for 5 seconds for inspection.
             return f"❌ {result.get('message')}"
     except Exception as e:
         return f"Error launching browser: {str(e)}"
+
+# Tool 14: Setup Monitoring Stack
+@mcp.tool()
+def setup_monitoring(project_root: str, services: Optional[str] = None) -> str:
+    """
+    Setup Grafana, Loki, and Promtail for log monitoring and visualization.
+    Generates configuration files, starts monitoring stack, and opens Grafana dashboard.
+    PRIMARY ACTION: Dockerizes your app and shows logs in Grafana dashboard.
+    
+    Args:
+        project_root: Root directory of the project
+        services: Comma-separated list of service names to monitor (e.g., backend,frontend). Auto-detected if not provided.
+    
+    Returns:
+        Setup report with Grafana URL and credentials
+    """
+    try:
+        logger.info(f"Setting up monitoring for {project_root}")
+        
+        # Parse services or auto-detect
+        if services:
+            service_list = [s.strip() for s in services.split(',')]
+        else:
+            # Auto-detect services
+            from docker_tools.multi_service_handler import detect_services
+            detected = detect_services(project_root)
+            service_list = list(detected.keys()) if detected else ["app"]
+        
+        result = setup_complete_monitoring(project_root, service_list)
+        return result
+    except Exception as e:
+        return f"Error setting up monitoring: {str(e)}"
+
+# Tool 15: Show Application Logs
+@mcp.tool()
+def show_logs(
+    service_name: Optional[str] = None,
+    loki_url: Optional[str] = None,
+    limit: Optional[int] = None
+) -> str:
+    """
+    Fetch and display logs from Loki for a specific service or all services.
+    
+    Args:
+        service_name: Name of the service to show logs for. Shows all if not provided.
+        loki_url: URL of Loki service (default: http://localhost:3100)
+        limit: Number of log lines to fetch (default: 100)
+    
+    Returns:
+        Formatted logs from the service
+    """
+    try:
+        logger.info(f"Fetching logs for service: {service_name or 'all'}")
+        
+        # Build LogQL query
+        if service_name:
+            query = f'{{container=~".*{service_name}.*"}}'
+        else:
+            query = '{job="docker"}'
+        
+        result = fetch_logs_from_loki(
+            loki_url or "http://localhost:3100",
+            query,
+            limit or 100
+        )
+        
+        if result["status"] == "success":
+            logs = result["logs"]
+            output = f"📋 **Logs for {service_name or 'All Services'}**\n\n"
+            output += f"**Total Logs:** {result['count']}\n\n"
+            
+            for log in logs[:20]:  # Show first 20
+                output += f"[{log['timestamp']}] {log['log']}\n"
+            
+            if result['count'] > 20:
+                output += f"\n... and {result['count'] - 20} more logs\n"
+            
+            return output
+        else:
+            return f"❌ {result['message']}"
+    except Exception as e:
+        return f"Error fetching logs: {str(e)}"
+
+# Tool 16: Analyze Logs for Errors
+@mcp.tool()
+def analyze_logs(
+    service_name: Optional[str] = None,
+    loki_url: Optional[str] = None,
+    limit: Optional[int] = None
+) -> str:
+    """
+    Analyze logs to identify errors, exceptions, and suggest code fixes.
+    Uses AI-powered pattern matching to detect common issues and provide solutions.
+    
+    Args:
+        service_name: Name of the service to analyze. Analyzes all if not provided.
+        loki_url: URL of Loki service (default: http://localhost:3100)
+        limit: Number of log lines to analyze (default: 200)
+    
+    Returns:
+        Analysis report with errors, warnings, and suggested fixes
+    """
+    try:
+        logger.info(f"Analyzing logs for service: {service_name or 'all'}")
+        
+        # Build LogQL query
+        if service_name:
+            query = f'{{container=~".*{service_name}.*"}}'
+        else:
+            query = '{job="docker"}'
+        
+        # Fetch logs
+        result = fetch_logs_from_loki(
+            loki_url or "http://localhost:3100",
+            query,
+            limit or 200
+        )
+        
+        if result["status"] != "success":
+            return f"❌ {result['message']}"
+        
+        # Analyze logs
+        analysis = analyze_logs_for_errors(result["logs"])
+        
+        # Generate suggestions
+        suggestions = suggest_fixes_for_errors(analysis)
+        
+        # Format output
+        output = f"🔍 **Log Analysis Report for {service_name or 'All Services'}**\n\n"
+        output += "=" * 60 + "\n\n"
+        output += f"**Total Logs Analyzed:** {analysis['total_logs']}\n"
+        output += f"**Errors Found:** {len(analysis['errors'])}\n"
+        output += f"**Warnings Found:** {len(analysis['warnings'])}\n"
+        output += f"**Exceptions Found:** {len(analysis['exceptions'])}\n\n"
+        
+        if suggestions:
+            output += "=" * 60 + "\n"
+            output += "🔧 **SUGGESTED FIXES**\n"
+            output += "=" * 60 + "\n\n"
+            
+            for idx, suggestion in enumerate(suggestions[:5], 1):  # Show top 5
+                output += f"**Issue #{idx}: {suggestion['issue']}**\n\n"
+                output += f"**Error Log:**\n```\n{suggestion['error_log'][:200]}...\n```\n\n"
+                output += f"**Possible Causes:**\n"
+                for cause in suggestion['possible_causes']:
+                    output += f"  - {cause}\n"
+                output += f"\n**Suggested Fixes:**\n"
+                for fix in suggestion['suggested_fixes']:
+                    output += f"  ✅ {fix}\n"
+                output += "\n" + "-" * 60 + "\n\n"
+        
+        if analysis['errors']:
+            output += "**Recent Errors:**\n"
+            for error in analysis['errors'][:5]:
+                output += f"  - {error['log'][:150]}...\n"
+        
+        if not suggestions and not analysis['errors']:
+            output += "✅ No errors or issues detected!\n"
+        
+        return output
+    except Exception as e:
+        return f"Error analyzing logs: {str(e)}"
+
+# Tool 17: Open Grafana Dashboard
+@mcp.tool()
+def open_grafana(grafana_url: Optional[str] = None) -> str:
+    """
+    Open Grafana dashboard in the default browser.
+    
+    Args:
+        grafana_url: URL of Grafana (default: http://localhost:3001)
+    
+    Returns:
+        Status message
+    """
+    try:
+        result = launch_grafana_dashboard(grafana_url or "http://localhost:3001")
+        return result
+    except Exception as e:
+        return f"Error opening Grafana: {str(e)}"
+
+# Tool 18: Complete Workflow - Dockerize and Monitor
+@mcp.tool()
+def dockerize_and_monitor(project_root: str, services: Optional[str] = None) -> str:
+    """
+    Complete workflow: Dockerize application, setup monitoring, and open Grafana dashboard.
+    ONE-COMMAND SOLUTION: Does everything - dockerizes your app and shows logs in Grafana!
+    
+    Args:
+        project_root: Root directory of the project
+        services: Comma-separated list of service names (e.g., backend,frontend). Auto-detected if not provided.
+    
+    Returns:
+        Complete report with Grafana URL and next steps
+    """
+    try:
+        logger.info(f"Starting complete dockerization and monitoring for {project_root}")
+        
+        output = "🚀 **Complete Dockerization and Monitoring**\n\n"
+        output += "=" * 60 + "\n\n"
+        
+        # Step 1: Dockerize project
+        output += "**STEP 1: Dockerizing Project...**\n\n"
+        dockerize_result = dockerize_full_project(project_root)
+        output += dockerize_result + "\n\n"
+        
+        # Step 2: Setup monitoring
+        output += "=" * 60 + "\n"
+        output += "**STEP 2: Setting up Monitoring Stack...**\n\n"
+        
+        # Parse services or auto-detect
+        if services:
+            service_list = [s.strip() for s in services.split(',')]
+        else:
+            from docker_tools.multi_service_handler import detect_services
+            detected = detect_services(project_root)
+            service_list = list(detected.keys()) if detected else ["app"]
+        
+        monitoring_result = setup_complete_monitoring(project_root, service_list)
+        output += monitoring_result + "\n\n"
+        
+        # Step 3: Launch Grafana
+        output += "=" * 60 + "\n"
+        output += "**STEP 3: Launching Grafana Dashboard...**\n\n"
+        launch_result = launch_grafana_dashboard("http://localhost:3001")
+        output += launch_result + "\n\n"
+        
+        output += "=" * 60 + "\n"
+        output += "✅ **COMPLETE! Your application is dockerized and monitored!**\n"
+        output += "=" * 60 + "\n"
+        
+        return output
+    except Exception as e:
+        return f"Error in complete workflow: {str(e)}"
 
 if __name__ == "__main__":
     # Run MCP server with stdio transport (works with Claude Desktop, etc.)

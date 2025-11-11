@@ -16,11 +16,19 @@ A Model Context Protocol (MCP) server that provides Docker containerization tool
 7. **dockerize_project** - Automatically dockerize entire projects with backend + frontend
 8. **detect_project_services** - Detect all services in a project
 
-### End-to-End Testing Tools (NEW! 🧪)
-9. **test_application_e2e** - Launch app and run Playwright tests automatically
+### End-to-End Testing Tools 🧪
+9. **test_application_e2e** - Launch app in browser and run Playwright tests
 10. **create_playwright_tests** - Generate Playwright test templates
 11. **start_services** - Start docker-compose services
 12. **stop_services** - Stop docker-compose services
+13. **launch_app_in_browser** - Open app in browser window
+
+### Log Monitoring Tools (NEW! 📊)
+14. **setup_monitoring** - Setup Grafana/Loki/Promtail log monitoring
+15. **show_logs** - Fetch and display logs from services
+16. **analyze_logs** - AI-powered log analysis with fix suggestions
+17. **open_grafana** - Launch Grafana dashboard in browser
+18. **dockerize_and_monitor** - Complete workflow: dockerize + monitor
 
 ## Installation
 
@@ -173,6 +181,68 @@ The generated `docker-compose.yml` includes:
 - ✅ Optional database and Redis services (commented out)
 - ✅ Health checks for all services
 
+## Log Monitoring with Grafana
+
+**NEW!** Monitor your dockerized applications with Grafana dashboards:
+
+### Quick Start - One Command
+
+```
+dockerize_and_monitor(project_root="C:\\path\\to\\MyProject")
+```
+
+This will:
+1. ✅ Dockerize your entire project (backend + frontend)
+2. ✅ Setup Grafana + Loki + Promtail monitoring stack
+3. ✅ Generate pre-configured dashboards
+4. ✅ Start all services
+5. ✅ Open Grafana in your browser
+
+**Access Grafana:**
+- URL: http://localhost:3001
+- Username: `admin`
+- Password: `admin`
+
+### Individual Monitoring Tools
+
+**Setup monitoring only:**
+```
+setup_monitoring(project_root="C:\\path\\to\\MyProject", services="backend,frontend")
+```
+
+**View logs:**
+```
+show_logs(service_name="backend", limit=100)
+```
+
+**Analyze logs for errors:**
+```
+analyze_logs(service_name="backend")
+```
+
+This provides:
+- ✅ Error detection
+- ✅ Pattern recognition
+- ✅ AI-powered fix suggestions
+- ✅ Root cause analysis
+
+**Open dashboard:**
+```
+open_grafana()
+```
+
+### What You Get
+
+- **Real-time log streaming** from all containers
+- **Pre-built dashboards** for each service
+- **Log search** with powerful query language
+- **Error analysis** with automatic fix suggestions
+- **Pattern detection** for common issues
+
+See [MONITORING_GUIDE.md](./MONITORING_GUIDE.md) for complete documentation.
+
+---
+
 ## Troubleshooting
 
 ### Encoding Errors on Windows
@@ -185,10 +255,25 @@ ports:
   - "8001:8000"  # Change 8001 to your preferred port
 ```
 
+For monitoring ports:
+- Grafana: 3001 (default)
+- Loki: 3100 (default)
+
 ### Service Not Detected
 Ensure your project follows standard naming conventions:
 - Backend: `backend/`, `api/`, `server/`
 - Frontend: `frontend/`, `client/`, `web/`, `app/`
+
+### Grafana Not Accessible
+Check if monitoring stack is running:
+```bash
+docker ps | grep -E "grafana|loki|promtail"
+```
+
+Restart monitoring stack:
+```bash
+docker-compose -f docker-compose.monitoring.yml restart
+```
 
 ## Contributing
 
