@@ -10,6 +10,13 @@ from docker_tools.docker_builder import build_docker_image
 from docker_tools.test_runner import run_tests_in_container
 from docker_tools.error_fixer import fix_containerization_errors
 from docker_tools.multi_service_handler import dockerize_full_project, detect_services
+from docker_tools.e2e_tester import (
+    launch_and_test, 
+    generate_playwright_test_template,
+    start_docker_compose,
+    stop_docker_compose,
+    run_playwright_tests
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -225,6 +232,145 @@ def detect_project_services(project_root: str) -> str:
         return json.dumps(services, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e), "status": "failed"})
+
+# Tool 9: Launch and Test Application End-to-End
+@mcp.tool()
+def test_application_e2e(
+    project_root: str,
+    backend_port: Optional[int] = None,
+    frontend_port: Optional[int] = None,
+    cleanup: Optional[bool] = None
+) -> str:
+    """
+    Launch the dockerized application and run end-to-end Playwright tests.
+    This tool automates: docker-compose up, wait for services, run tests, cleanup.
+    
+    Args:
+        project_root: Root directory with docker-compose.yml
+        backend_port: Backend service port (default: 8000)
+        frontend_port: Frontend service port (default: 3000)
+        cleanup: Stop services after tests (default: True)
+    
+    Returns:
+        Complete test report with results
+    """
+    try:
+        logger.info(f"Running E2E tests for {project_root}")
+        result = launch_and_test(
+            project_root,
+            backend_port or 8000,
+            frontend_port or 3000,
+            cleanup if cleanup is not None else True
+        )
+        return result
+    except Exception as e:
+        return f"Error running E2E tests: {str(e)}"
+
+# Tool 10: Generate Playwright Test Template
+@mcp.tool()
+def create_playwright_tests(
+    project_root: str,
+    backend_url: Optional[str] = None,
+    frontend_url: Optional[str] = None
+) -> str:
+    """
+    Generate Playwright test templates for the project.
+    Creates e2e-tests directory with configuration and sample tests.
+    
+    Args:
+        project_root: Root directory of the project
+        backend_url: Backend URL (default: http://localhost:8000)
+        frontend_url: Frontend URL (default: http://localhost:3000)
+    
+    Returns:
+        Path to generated test directory and next steps
+    """
+    try:
+        logger.info(f"Generating Playwright tests for {project_root}")
+        test_dir = generate_playwright_test_template(
+            project_root,
+            backend_url or "http://localhost:8000",
+            frontend_url or "http://localhost:3000"
+        )
+        
+        return f"""✅ **Playwright Test Template Created**
+
+**Test Directory:** {test_dir}
+
+**Files Created:**
+- package.json (with @playwright/test dependency)
+- playwright.config.js (Playwright configuration)
+- tests/app.spec.js (Sample E2E tests)
+
+**Next Steps:**
+1. Install Playwright:
+   ```
+   cd {test_dir}
+   npm install
+   npx playwright install
+   ```
+
+2. Run tests:
+   ```
+   npm test
+   ```
+
+3. Run tests in UI mode:
+   ```
+   npm run test:ui
+   ```
+
+4. Customize tests in: {os.path.join(test_dir, 'tests', 'app.spec.js')}
+"""
+    except Exception as e:
+        return f"Error generating Playwright tests: {str(e)}"
+
+# Tool 11: Start Docker Compose Services
+@mcp.tool()
+def start_services(project_root: str, detached: Optional[bool] = None) -> str:
+    """
+    Start docker-compose services without running tests.
+    
+    Args:
+        project_root: Root directory with docker-compose.yml
+        detached: Run in background (default: True)
+    
+    Returns:
+        Status message
+    """
+    try:
+        logger.info(f"Starting services in {project_root}")
+        result = start_docker_compose(project_root, detached if detached is not None else True)
+        
+        if result["status"] == "success":
+            return f"✅ {result['message']}\n\n{result.get('output', '')}"
+        else:
+            return f"❌ {result['message']}\n\n{result.get('error', '')}"
+    except Exception as e:
+        return f"Error starting services: {str(e)}"
+
+# Tool 12: Stop Docker Compose Services
+@mcp.tool()
+def stop_services(project_root: str) -> str:
+    """
+    Stop and remove docker-compose services.
+    
+    Args:
+        project_root: Root directory with docker-compose.yml
+    
+    Returns:
+        Status message
+    """
+    try:
+        logger.info(f"Stopping services in {project_root}")
+        result = stop_docker_compose(project_root)
+        
+        if result["status"] == "success":
+            return f"✅ Services stopped successfully\n\n{result.get('output', '')}"
+        else:
+            return f"❌ Error stopping services\n\n{result.get('output', '')}"
+    except Exception as e:
+        return f"Error stopping services: {str(e)}"
 
 if __name__ == "__main__":
     # Run MCP server with stdio transport (works with Claude Desktop, etc.)

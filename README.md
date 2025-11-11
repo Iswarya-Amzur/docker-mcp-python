@@ -12,9 +12,15 @@ A Model Context Protocol (MCP) server that provides Docker containerization tool
 5. **fix_errors** - Analyze and suggest fixes for containerization errors
 6. **get_container_logs** - Retrieve container logs for debugging
 
-### Multi-Service Tools (NEW! ✨)
+### Multi-Service Tools
 7. **dockerize_project** - Automatically dockerize entire projects with backend + frontend
 8. **detect_project_services** - Detect all services in a project
+
+### End-to-End Testing Tools (NEW! 🧪)
+9. **test_application_e2e** - Launch app and run Playwright tests automatically
+10. **create_playwright_tests** - Generate Playwright test templates
+11. **start_services** - Start docker-compose services
+12. **stop_services** - Stop docker-compose services
 
 ## Installation
 
@@ -93,6 +99,40 @@ MyProject/
 **After dockerization, run:**
 ```bash
 docker-compose up --build
+```
+
+### End-to-End Testing with Playwright
+
+Test your dockerized application automatically:
+
+1. **Generate test templates:**
+```
+create_playwright_tests(project_root="C:\\path\\to\\MyProject")
+```
+
+2. **Install Playwright (one time):**
+```bash
+cd MyProject/e2e-tests
+npm install
+npx playwright install
+```
+
+3. **Run complete E2E tests:**
+```
+test_application_e2e(project_root="C:\\path\\to\\MyProject")
+```
+
+This will:
+- ✅ Start all services with docker-compose
+- ✅ Wait for services to be ready
+- ✅ Run Playwright tests against the running app
+- ✅ Generate a detailed test report
+- ✅ Clean up and stop services
+
+**Manual control:**
+```
+start_services(project_root="C:\\path\\to\\MyProject")  # Start only
+stop_services(project_root="C:\\path\\to\\MyProject")   # Stop only
 ```
 
 ### Single Service Dockerization
