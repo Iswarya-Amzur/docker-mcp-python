@@ -395,16 +395,185 @@ test.describe('Application E2E Tests', () => {{
     return test_dir
 
 
-def launch_and_test(project_root: str, backend_port: int = 8000, 
-                   frontend_port: int = 3000, cleanup: bool = True) -> str:
+def launch_browser(url: str, browser: str = "chromium", headless: bool = False) -> dict:
     """
-    Complete workflow: Start docker-compose, wait for services, run tests, cleanup.
+    Launch a browser and navigate to URL using Playwright.
+    
+    Args:
+        url: URL to open
+        browser: Browser type (chromium, firefox, webkit)
+        headless: Run in headless mode
+        
+    Returns:
+        Dictionary with status
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        
+        with sync_playwright() as p:
+            # Launch browser
+            if browser == "firefox":
+                browser_instance = p.firefox.launch(headless=headless)
+            elif browser == "webkit":
+                browser_instance = p.webkit.launch(headless=headless)
+            else:
+                browser_instance = p.chromium.launch(headless=headless)
+            
+            context = browser_instance.new_context()
+            page = context.new_page()
+            
+            # Navigate to URL
+            logger.info(f"Opening {url} in {browser}")
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            
+            # Take screenshot
+            screenshot_path = os.path.join(os.getcwd(), "app_screenshot.png")
+            page.screenshot(path=screenshot_path)
+            
+            # Keep browser open for manual inspection (5 seconds)
+            if not headless:
+                logger.info("Browser launched. Keeping open for inspection...")
+                page.wait_for_timeout(5000)
+            
+            # Get page info
+            title = page.title()
+            url_final = page.url
+            
+            browser_instance.close()
+            
+            return {
+                "status": "success",
+                "title": title,
+                "url": url_final,
+                "screenshot": screenshot_path
+            }
+    except ImportError:
+        return {
+            "status": "error",
+            "message": "Playwright not installed. Run: pip install playwright && playwright install"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error launching browser: {str(e)}"
+        }
+
+
+def run_interactive_tests(project_root: str, frontend_url: str = "http://localhost:3000",
+                         backend_url: str = "http://localhost:8000", headless: bool = False) -> dict:
+    """
+    Run interactive Playwright tests with visible browser.
+    
+    Args:
+        project_root: Root directory of the project
+        frontend_url: Frontend URL
+        backend_url: Backend URL
+        headless: Run in headless mode
+        
+    Returns:
+        Dictionary with test results
+    """
+    try:
+        from playwright.sync_api import sync_playwright, expect
+        
+        results = {
+            "tests": [],
+            "passed": 0,
+            "failed": 0,
+            "total": 0
+        }
+        
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=headless)
+            context = browser.new_context()
+            page = context.new_page()
+            
+            # Test 1: Backend health check
+            results["total"] += 1
+            try:
+                response = page.request.get(f"{backend_url}/health")
+                if response.ok:
+                    results["tests"].append({"name": "Backend health check", "status": "passed"})
+                    results["passed"] += 1
+                else:
+                    results["tests"].append({"name": "Backend health check", "status": "failed", "error": f"Status {response.status}"})
+                    results["failed"] += 1
+            except Exception as e:
+                results["tests"].append({"name": "Backend health check", "status": "failed", "error": str(e)})
+                results["failed"] += 1
+            
+            # Test 2: Frontend loads
+            results["total"] += 1
+            try:
+                logger.info(f"Loading frontend at {frontend_url}")
+                page.goto(frontend_url, wait_until="networkidle", timeout=30000)
+                title = page.title()
+                results["tests"].append({"name": "Frontend loads successfully", "status": "passed", "title": title})
+                results["passed"] += 1
+                
+                # Take screenshot
+                screenshot_path = os.path.join(project_root, "frontend_screenshot.png")
+                page.screenshot(path=screenshot_path, full_page=True)
+                results["screenshot"] = screenshot_path
+                
+                # Keep browser open for inspection if not headless
+                if not headless:
+                    logger.info("Application running in browser. Keeping open for 10 seconds...")
+                    page.wait_for_timeout(10000)
+                
+            except Exception as e:
+                results["tests"].append({"name": "Frontend loads successfully", "status": "failed", "error": str(e)})
+                results["failed"] += 1
+            
+            # Test 3: Check for API calls
+            results["total"] += 1
+            try:
+                # Listen for network requests
+                api_calls = []
+                page.on("request", lambda request: api_calls.append(request.url) if backend_url in request.url else None)
+                
+                page.reload(wait_until="networkidle")
+                page.wait_for_timeout(2000)
+                
+                if api_calls:
+                    results["tests"].append({"name": "Frontend-Backend communication", "status": "passed", "api_calls": len(api_calls)})
+                    results["passed"] += 1
+                else:
+                    results["tests"].append({"name": "Frontend-Backend communication", "status": "warning", "note": "No API calls detected"})
+            except Exception as e:
+                results["tests"].append({"name": "Frontend-Backend communication", "status": "failed", "error": str(e)})
+                results["failed"] += 1
+            
+            browser.close()
+        
+        results["status"] = "success" if results["failed"] == 0 else "partial"
+        return results
+        
+    except ImportError:
+        return {
+            "status": "error",
+            "message": "Playwright not installed. Run: pip install playwright && playwright install"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error running interactive tests: {str(e)}"
+        }
+
+
+def launch_and_test(project_root: str, backend_port: int = 8000, 
+                   frontend_port: int = 3000, cleanup: bool = True,
+                   headless: bool = False, show_browser: bool = True) -> str:
+    """
+    Complete workflow: Start docker-compose, wait for services, launch browser, run tests, cleanup.
     
     Args:
         project_root: Root directory with docker-compose.yml
         backend_port: Backend service port
         frontend_port: Frontend service port
         cleanup: Whether to stop docker-compose after tests
+        headless: Run browser in headless mode
+        show_browser: Launch browser to show the running application
         
     Returns:
         Formatted test report
@@ -434,8 +603,45 @@ def launch_and_test(project_root: str, backend_port: int = 8000,
     
     report += f"✅ Services ready: {wait_result['services']}\n\n"
     
-    # Step 3: Check for tests
-    report += "**Step 3: Running tests...**\n"
+    # Step 3: Launch browser and show application
+    if show_browser:
+        report += "**Step 3: Launching application in browser...**\n"
+        frontend_url = f"http://localhost:{frontend_port}"
+        backend_url = f"http://localhost:{backend_port}"
+        
+        try:
+            # Run interactive tests with browser
+            interactive_results = run_interactive_tests(
+                project_root,
+                frontend_url,
+                backend_url,
+                headless=headless
+            )
+            
+            if interactive_results["status"] == "error":
+                report += f"❌ {interactive_results['message']}\n"
+            else:
+                report += f"🌐 Application launched at: {frontend_url}\n"
+                report += f"📊 Tests completed: {interactive_results['passed']}/{interactive_results['total']} passed\n\n"
+                
+                for test in interactive_results.get("tests", []):
+                    status_icon = "✅" if test["status"] == "passed" else "❌" if test["status"] == "failed" else "⚠️"
+                    report += f"{status_icon} {test['name']}\n"
+                    if "error" in test:
+                        report += f"   Error: {test['error']}\n"
+                    if "title" in test:
+                        report += f"   Page title: {test['title']}\n"
+                    if "api_calls" in test:
+                        report += f"   API calls made: {test['api_calls']}\n"
+                
+                if "screenshot" in interactive_results:
+                    report += f"\n📸 Screenshot saved: {interactive_results['screenshot']}\n"
+        
+        except Exception as e:
+            report += f"❌ Error launching browser: {str(e)}\n"
+    
+    # Step 4: Check for additional test files
+    report += "\n**Step 4: Running additional tests...**\n"
     test_dir = os.path.join(project_root, "e2e-tests")
     
     if not os.path.exists(test_dir):
@@ -464,9 +670,9 @@ def launch_and_test(project_root: str, backend_port: int = 8000,
         else:
             report += f"⚠️  No tests found in {test_path}\n"
     
-    # Step 4: Cleanup
+    # Step 5: Cleanup
     if cleanup:
-        report += "\n**Step 4: Cleaning up...**\n"
+        report += "\n**Step 5: Cleaning up...**\n"
         stop_result = stop_docker_compose(project_root)
         report += "✅ Services stopped\n" if stop_result["status"] == "success" else "⚠️  Cleanup warning\n"
     else:

@@ -239,20 +239,25 @@ def test_application_e2e(
     project_root: str,
     backend_port: Optional[int] = None,
     frontend_port: Optional[int] = None,
-    cleanup: Optional[bool] = None
+    cleanup: Optional[bool] = None,
+    headless: Optional[bool] = None,
+    show_browser: Optional[bool] = None
 ) -> str:
     """
-    Launch the dockerized application and run end-to-end Playwright tests.
-    This tool automates: docker-compose up, wait for services, run tests, cleanup.
+    Launch the dockerized application in a browser and run end-to-end Playwright tests.
+    Opens the application in a real browser window (like Playwright MCP) for visual testing.
+    This tool automates: docker-compose up, wait for services, launch browser, run tests, cleanup.
     
     Args:
         project_root: Root directory with docker-compose.yml
         backend_port: Backend service port (default: 8000)
         frontend_port: Frontend service port (default: 3000)
         cleanup: Stop services after tests (default: True)
+        headless: Run browser in headless mode (default: False - shows browser)
+        show_browser: Launch browser to show running application (default: True)
     
     Returns:
-        Complete test report with results
+        Complete test report with results and screenshot
     """
     try:
         logger.info(f"Running E2E tests for {project_root}")
@@ -260,7 +265,9 @@ def test_application_e2e(
             project_root,
             backend_port or 8000,
             frontend_port or 3000,
-            cleanup if cleanup is not None else True
+            cleanup if cleanup is not None else True,
+            headless if headless is not None else False,
+            show_browser if show_browser is not None else True
         )
         return result
     except Exception as e:
@@ -371,6 +378,50 @@ def stop_services(project_root: str) -> str:
             return f"❌ Error stopping services\n\n{result.get('output', '')}"
     except Exception as e:
         return f"Error stopping services: {str(e)}"
+
+# Tool 13: Launch Application in Browser
+@mcp.tool()
+def launch_app_in_browser(
+    frontend_url: Optional[str] = None,
+    browser: Optional[str] = None,
+    headless: Optional[bool] = None
+) -> str:
+    """
+    Launch the application in a browser window (like opening it manually).
+    Use this to visually see your dockerized application running.
+    
+    Args:
+        frontend_url: URL of the frontend (default: http://localhost:3000)
+        browser: Browser to use - chromium, firefox, or webkit (default: chromium)
+        headless: Run in headless mode (default: False - shows browser window)
+    
+    Returns:
+        Status message with page title and screenshot location
+    """
+    from docker_tools.e2e_tester import launch_browser
+    
+    try:
+        logger.info(f"Launching application in browser")
+        result = launch_browser(
+            frontend_url or "http://localhost:3000",
+            browser or "chromium",
+            headless if headless is not None else False
+        )
+        
+        if result["status"] == "success":
+            return f"""✅ **Application Launched in Browser**
+
+**Page Title:** {result.get('title', 'N/A')}
+**URL:** {result.get('url')}
+**Screenshot:** {result.get('screenshot')}
+
+The application was opened in {browser or 'chromium'} browser.
+Browser window was kept open for 5 seconds for inspection.
+"""
+        else:
+            return f"❌ {result.get('message')}"
+    except Exception as e:
+        return f"Error launching browser: {str(e)}"
 
 if __name__ == "__main__":
     # Run MCP server with stdio transport (works with Claude Desktop, etc.)
