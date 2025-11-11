@@ -30,7 +30,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize MCP server
-mcp = FastMCP("Docker MCP", version="1.0.0")
+mcp = FastMCP("Amzure Docker MCP", version="1.0.0")
 
 # Tool 1: Analyze Application Structure
 @mcp.tool()
@@ -248,12 +248,13 @@ def test_application_e2e(
     frontend_port: Optional[int] = None,
     cleanup: Optional[bool] = None,
     headless: Optional[bool] = None,
-    show_browser: Optional[bool] = None
+    show_browser: Optional[bool] = None,
+    use_system_browser: Optional[bool] = None
 ) -> str:
     """
     Launch the dockerized application in a browser and run end-to-end tests.
-    PRIMARY ACTION: Opens the application in a real browser window for you to see and interact with.
-    This is the main way to test your dockerized app - it launches the browser automatically!
+    PRIMARY ACTION: Opens the application in YOUR DEFAULT BROWSER (Chrome, Edge, Firefox).
+    This is the main way to test your dockerized app - it launches in your actual browser!
     
     Args:
         project_root: Root directory with docker-compose.yml
@@ -262,6 +263,7 @@ def test_application_e2e(
         cleanup: Stop services after browser testing (default: False - keeps running)
         headless: Run browser in headless mode (default: False - SHOWS browser window)
         show_browser: Launch browser to show running application (default: True - ALWAYS ON)
+        use_system_browser: Open in your default browser Chrome/Edge instead of Playwright (default: True)
     
     Returns:
         Test report with browser launch status and running service URLs
@@ -274,7 +276,8 @@ def test_application_e2e(
             frontend_port or 3000,
             cleanup if cleanup is not None else False,  # Keep running by default
             headless if headless is not None else False,  # Show browser by default
-            show_browser if show_browser is not None else True  # Always launch browser
+            show_browser if show_browser is not None else True,  # Always launch browser
+            use_system_browser if use_system_browser is not None else True  # Use actual browser by default
         )
         return result
     except Exception as e:
@@ -391,16 +394,18 @@ def stop_services(project_root: str) -> str:
 def launch_app_in_browser(
     frontend_url: Optional[str] = None,
     browser: Optional[str] = None,
-    headless: Optional[bool] = None
+    headless: Optional[bool] = None,
+    use_system_browser: Optional[bool] = None
 ) -> str:
     """
     Launch the application in a browser window (like opening it manually).
-    Use this to visually see your dockerized application running.
+    Opens in YOUR DEFAULT BROWSER (Chrome, Edge, Firefox) by default!
     
     Args:
         frontend_url: URL of the frontend (default: http://localhost:3000)
-        browser: Browser to use - chromium, firefox, or webkit (default: chromium)
+        browser: Browser to use - chromium, firefox, webkit, or system (default: system)
         headless: Run in headless mode (default: False - shows browser window)
+        use_system_browser: Open in your actual default browser (default: True)
     
     Returns:
         Status message with page title and screenshot location
@@ -409,20 +414,36 @@ def launch_app_in_browser(
     
     try:
         logger.info(f"Launching application in browser")
+        
+        # Default to system browser
+        use_sys_browser = use_system_browser if use_system_browser is not None else True
+        browser_type = browser or ("system" if use_sys_browser else "chromium")
+        
         result = launch_browser(
             frontend_url or "http://localhost:3000",
-            browser or "chromium",
-            headless if headless is not None else False
+            browser_type,
+            headless if headless is not None else False,
+            use_sys_browser
         )
         
         if result["status"] == "success":
-            return f"""✅ **Application Launched in Browser**
+            if use_sys_browser or browser_type == "system":
+                return f"""✅ **Application Launched in Your Default Browser**
+
+**URL:** {result.get('url')}
+
+The application was opened in your system's default web browser (Chrome/Edge/Firefox).
+The browser window should have opened automatically.
+If not, manually visit: {result.get('url')}
+"""
+            else:
+                return f"""✅ **Application Launched in Browser**
 
 **Page Title:** {result.get('title', 'N/A')}
 **URL:** {result.get('url')}
 **Screenshot:** {result.get('screenshot')}
 
-The application was opened in {browser or 'chromium'} browser.
+The application was opened in {browser_type} browser.
 Browser window was kept open for 5 seconds for inspection.
 """
         else:

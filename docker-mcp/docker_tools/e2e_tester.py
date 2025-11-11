@@ -3,6 +3,7 @@ import os
 import time
 import logging
 import json
+import webbrowser
 
 logger = logging.getLogger(__name__)
 
@@ -395,18 +396,50 @@ test.describe('Application E2E Tests', () => {{
     return test_dir
 
 
-def launch_browser(url: str, browser: str = "chromium", headless: bool = False) -> dict:
+def open_in_system_browser(url: str) -> dict:
     """
-    Launch a browser and navigate to URL using Playwright.
+    Open URL in the system's default web browser (Chrome, Edge, Firefox, etc.).
+    This opens in your ACTUAL browser, not a Playwright-controlled one.
     
     Args:
         url: URL to open
-        browser: Browser type (chromium, firefox, webkit)
-        headless: Run in headless mode
         
     Returns:
         Dictionary with status
     """
+    try:
+        logger.info(f"Opening {url} in system default browser")
+        webbrowser.open(url)
+        
+        return {
+            "status": "success",
+            "url": url,
+            "message": f"Opened {url} in your default browser"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error opening browser: {str(e)}"
+        }
+
+
+def launch_browser(url: str, browser: str = "chromium", headless: bool = False, use_system_browser: bool = False) -> dict:
+    """
+    Launch a browser and navigate to URL.
+    
+    Args:
+        url: URL to open
+        browser: Browser type (chromium, firefox, webkit, system)
+        headless: Run in headless mode (ignored if use_system_browser=True)
+        use_system_browser: If True, opens in your default browser (Chrome/Edge/Firefox)
+        
+    Returns:
+        Dictionary with status
+    """
+    # If user wants system browser, use that instead of Playwright
+    if use_system_browser or browser == "system":
+        return open_in_system_browser(url)
+    
     try:
         from playwright.sync_api import sync_playwright
         
@@ -563,7 +596,8 @@ def run_interactive_tests(project_root: str, frontend_url: str = "http://localho
 
 def launch_and_test(project_root: str, backend_port: int = 8000, 
                    frontend_port: int = 3000, cleanup: bool = False,
-                   headless: bool = False, show_browser: bool = True) -> str:
+                   headless: bool = False, show_browser: bool = True,
+                   use_system_browser: bool = True) -> str:
     """
     Complete workflow: Start docker-compose, wait for services, launch browser, run tests, cleanup.
     
@@ -574,6 +608,7 @@ def launch_and_test(project_root: str, backend_port: int = 8000,
         cleanup: Whether to stop docker-compose after tests
         headless: Run browser in headless mode
         show_browser: Launch browser to show the running application
+        use_system_browser: Open in your default browser (Chrome/Edge) instead of Playwright
         
     Returns:
         Formatted test report
@@ -609,46 +644,68 @@ def launch_and_test(project_root: str, backend_port: int = 8000,
     backend_url = f"http://localhost:{backend_port}"
     
     if show_browser:
-        try:
-            # Run interactive tests with browser
-            interactive_results = run_interactive_tests(
-                project_root,
-                frontend_url,
-                backend_url,
-                headless=headless
-            )
-            
-            if interactive_results["status"] == "error":
-                report += f"❌ {interactive_results['message']}\n"
-                report += f"\n💡 Tip: Make sure Playwright is installed:\n"
-                report += f"   pip install playwright\n"
-                report += f"   playwright install\n"
-            else:
-                report += f"✅ Browser launched successfully!\n"
-                report += f"🌐 Application URL: {frontend_url}\n"
-                report += f"�️  Backend URL: {backend_url}\n\n"
-                report += f"📊 Quick Tests: {interactive_results['passed']}/{interactive_results['total']} passed\n\n"
+        # OPTION 1: Open in system browser (Chrome, Edge, Firefox - your actual browser)
+        if use_system_browser:
+            try:
+                logger.info(f"Opening application in system default browser")
+                webbrowser.open(frontend_url)
                 
-                for test in interactive_results.get("tests", []):
-                    status_icon = "✅" if test["status"] == "passed" else "❌" if test["status"] == "failed" else "⚠️"
-                    report += f"{status_icon} {test['name']}\n"
-                    if "error" in test:
-                        report += f"   Error: {test['error']}\n"
-                    if "title" in test:
-                        report += f"   Page title: {test['title']}\n"
-                    if "api_calls" in test:
-                        report += f"   API calls made: {test['api_calls']}\n"
+                report += f"✅ Application opened in your default browser!\n"
+                report += f"🌐 Frontend: {frontend_url}\n"
+                report += f"🔧 Backend: {backend_url}\n\n"
+                report += f"💡 Your dockerized application is now running!\n"
+                report += f"   The browser window should have opened automatically.\n"
+                report += f"   If not, manually visit: {frontend_url}\n\n"
                 
-                if "screenshot" in interactive_results:
-                    report += f"\n📸 Screenshot saved: {interactive_results['screenshot']}\n"
+                # Give services a moment to stabilize
+                time.sleep(2)
                 
-                report += f"\n💡 The application is now running in your browser!\n"
-                report += f"   Frontend: {frontend_url}\n"
-                report += f"   Backend: {backend_url}\n"
+            except Exception as e:
+                report += f"❌ Error opening system browser: {str(e)}\n"
+                report += f"   Please manually open: {frontend_url}\n"
         
-        except Exception as e:
-            report += f"❌ Error launching browser: {str(e)}\n"
-            report += f"\n💡 Install Playwright: pip install playwright && playwright install\n"
+        # OPTION 2: Use Playwright (automated testing with controlled browser)
+        else:
+            try:
+                # Run interactive tests with browser
+                interactive_results = run_interactive_tests(
+                    project_root,
+                    frontend_url,
+                    backend_url,
+                    headless=headless
+                )
+                
+                if interactive_results["status"] == "error":
+                    report += f"❌ {interactive_results['message']}\n"
+                    report += f"\n💡 Tip: Make sure Playwright is installed:\n"
+                    report += f"   pip install playwright\n"
+                    report += f"   playwright install\n"
+                else:
+                    report += f"✅ Browser launched successfully!\n"
+                    report += f"🌐 Application URL: {frontend_url}\n"
+                    report += f"🔧 Backend URL: {backend_url}\n\n"
+                    report += f"📊 Quick Tests: {interactive_results['passed']}/{interactive_results['total']} passed\n\n"
+                    
+                    for test in interactive_results.get("tests", []):
+                        status_icon = "✅" if test["status"] == "passed" else "❌" if test["status"] == "failed" else "⚠️"
+                        report += f"{status_icon} {test['name']}\n"
+                        if "error" in test:
+                            report += f"   Error: {test['error']}\n"
+                        if "title" in test:
+                            report += f"   Page title: {test['title']}\n"
+                        if "api_calls" in test:
+                            report += f"   API calls made: {test['api_calls']}\n"
+                    
+                    if "screenshot" in interactive_results:
+                        report += f"\n📸 Screenshot saved: {interactive_results['screenshot']}\n"
+                    
+                    report += f"\n💡 The application is now running in your browser!\n"
+                    report += f"   Frontend: {frontend_url}\n"
+                    report += f"   Backend: {backend_url}\n"
+            
+            except Exception as e:
+                report += f"❌ Error launching browser: {str(e)}\n"
+                report += f"\n💡 Install Playwright: pip install playwright && playwright install\n"
     else:
         report += f"⚠️  Browser launch disabled (show_browser=False)\n"
         report += f"   Frontend URL: {frontend_url}\n"
