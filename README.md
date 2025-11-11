@@ -24,11 +24,12 @@ A Model Context Protocol (MCP) server that provides Docker containerization tool
 13. **launch_app_in_browser** - Open app in browser window
 
 ### Log Monitoring Tools (NEW! 📊)
-14. **setup_monitoring** - Setup Grafana/Loki/Promtail log monitoring
-15. **show_logs** - Fetch and display logs from services
+14. **setup_monitoring** - Setup Grafana/Loki/Promtail with auto-validation
+15. **show_logs** - Fetch and display logs (auto-validates connection)
 16. **analyze_logs** - AI-powered log analysis with fix suggestions
 17. **open_grafana** - Launch Grafana dashboard in browser
-18. **dockerize_and_monitor** - Complete workflow: dockerize + monitor
+18. **dockerize_and_monitor** - Complete workflow: dockerize + monitor + validate
+19. **validate_monitoring** - Validate Loki/Promtail connection and auto-fix issues
 
 ## Installation
 

@@ -22,7 +22,9 @@ from docker_tools.logging_monitor import (
     fetch_logs_from_loki,
     analyze_logs_for_errors,
     suggest_fixes_for_errors,
-    launch_grafana_dashboard
+    launch_grafana_dashboard,
+    validate_and_fix_monitoring,
+    diagnose_monitoring_stack
 )
 
 # Configure logging
@@ -453,18 +455,19 @@ Browser window was kept open for 5 seconds for inspection.
 
 # Tool 14: Setup Monitoring Stack
 @mcp.tool()
-def setup_monitoring(project_root: str, services: Optional[str] = None) -> str:
+def setup_monitoring(project_root: str, services: Optional[str] = None, validate: Optional[bool] = None) -> str:
     """
     Setup Grafana, Loki, and Promtail for log monitoring and visualization.
-    Generates configuration files, starts monitoring stack, and opens Grafana dashboard.
+    Automatically validates that Loki is receiving logs and fixes common issues.
     PRIMARY ACTION: Dockerizes your app and shows logs in Grafana dashboard.
     
     Args:
         project_root: Root directory of the project
         services: Comma-separated list of service names to monitor (e.g., backend,frontend). Auto-detected if not provided.
+        validate: Run validation and auto-fix after setup (default: True)
     
     Returns:
-        Setup report with Grafana URL and credentials
+        Setup report with Grafana URL, credentials, and validation results
     """
     try:
         logger.info(f"Setting up monitoring for {project_root}")
@@ -478,7 +481,18 @@ def setup_monitoring(project_root: str, services: Optional[str] = None) -> str:
             detected = detect_services(project_root)
             service_list = list(detected.keys()) if detected else ["app"]
         
+        # Setup monitoring stack
         result = setup_complete_monitoring(project_root, service_list)
+        
+        # Validate and fix if enabled (default: True)
+        if validate if validate is not None else True:
+            result += "\n\n" + "=" * 60 + "\n"
+            result += "**Validating Monitoring Stack...**\n"
+            result += "=" * 60 + "\n\n"
+            
+            validation_result = validate_and_fix_monitoring(project_root)
+            result += validation_result
+        
         return result
     except Exception as e:
         return f"Error setting up monitoring: {str(e)}"
@@ -488,21 +502,43 @@ def setup_monitoring(project_root: str, services: Optional[str] = None) -> str:
 def show_logs(
     service_name: Optional[str] = None,
     loki_url: Optional[str] = None,
-    limit: Optional[int] = None
+    limit: Optional[int] = None,
+    project_root: Optional[str] = None,
+    auto_validate: Optional[bool] = None
 ) -> str:
     """
     Fetch and display logs from Loki for a specific service or all services.
+    Automatically validates that Loki is receiving logs and fixes issues if needed.
     
     Args:
         service_name: Name of the service to show logs for. Shows all if not provided.
         loki_url: URL of Loki service (default: http://localhost:3100)
         limit: Number of log lines to fetch (default: 100)
+        project_root: Root directory for validation (optional, enables auto-fix)
+        auto_validate: Validate and fix monitoring before showing logs (default: True if project_root provided)
     
     Returns:
-        Formatted logs from the service
+        Formatted logs from the service with optional validation report
     """
     try:
         logger.info(f"Fetching logs for service: {service_name or 'all'}")
+        
+        output = ""
+        
+        # Auto-validate if project_root is provided
+        if project_root and (auto_validate if auto_validate is not None else True):
+            output += "🔍 **Checking monitoring stack...**\n\n"
+            
+            # Quick diagnostic check
+            diagnostics = diagnose_monitoring_stack(project_root)
+            
+            if not diagnostics["logs"].get("receiving_logs"):
+                output += "⚠️  Loki is not receiving logs. Running automatic fix...\n\n"
+                validation_result = validate_and_fix_monitoring(project_root)
+                output += validation_result + "\n\n"
+                output += "=" * 60 + "\n\n"
+            else:
+                output += "✅ Monitoring stack is healthy\n\n"
         
         # Build LogQL query
         if service_name:
@@ -518,7 +554,19 @@ def show_logs(
         
         if result["status"] == "success":
             logs = result["logs"]
-            output = f"📋 **Logs for {service_name or 'All Services'}**\n\n"
+            
+            if not logs:
+                output += f"📋 **Logs for {service_name or 'All Services'}**\n\n"
+                output += "⚠️  No logs found in Loki.\n\n"
+                output += "**Possible reasons:**\n"
+                output += "  - Application containers are not running\n"
+                output += "  - Promtail is not collecting logs\n"
+                output += "  - Services haven't generated any logs yet\n\n"
+                if project_root:
+                    output += "💡 Run validate_monitoring to diagnose and fix issues.\n"
+                return output
+            
+            output += f"📋 **Logs for {service_name or 'All Services'}**\n\n"
             output += f"**Total Logs:** {result['count']}\n\n"
             
             for log in logs[:20]:  # Show first 20
@@ -529,7 +577,10 @@ def show_logs(
             
             return output
         else:
-            return f"❌ {result['message']}"
+            output += f"❌ Failed to fetch logs: {result['message']}\n\n"
+            if project_root:
+                output += "💡 Run validate_monitoring to diagnose and fix issues.\n"
+            return output
     except Exception as e:
         return f"Error fetching logs: {str(e)}"
 
@@ -671,9 +722,15 @@ def dockerize_and_monitor(project_root: str, services: Optional[str] = None) -> 
         monitoring_result = setup_complete_monitoring(project_root, service_list)
         output += monitoring_result + "\n\n"
         
-        # Step 3: Launch Grafana
+        # Step 3: Validate monitoring stack
         output += "=" * 60 + "\n"
-        output += "**STEP 3: Launching Grafana Dashboard...**\n\n"
+        output += "**STEP 3: Validating Monitoring Stack...**\n\n"
+        validation_result = validate_and_fix_monitoring(project_root)
+        output += validation_result + "\n\n"
+        
+        # Step 4: Launch Grafana
+        output += "=" * 60 + "\n"
+        output += "**STEP 4: Launching Grafana Dashboard...**\n\n"
         launch_result = launch_grafana_dashboard("http://localhost:3001")
         output += launch_result + "\n\n"
         
@@ -684,6 +741,26 @@ def dockerize_and_monitor(project_root: str, services: Optional[str] = None) -> 
         return output
     except Exception as e:
         return f"Error in complete workflow: {str(e)}"
+
+# Tool 19: Validate Monitoring Stack
+@mcp.tool()
+def validate_monitoring(project_root: str) -> str:
+    """
+    Validate that Loki is receiving logs from Promtail and automatically fix common issues.
+    Use this when you want to check if monitoring is working correctly.
+    
+    Args:
+        project_root: Root directory of the project
+    
+    Returns:
+        Detailed validation report with diagnostics and fixes applied
+    """
+    try:
+        logger.info(f"Validating monitoring stack for {project_root}")
+        result = validate_and_fix_monitoring(project_root)
+        return result
+    except Exception as e:
+        return f"Error validating monitoring: {str(e)}"
 
 if __name__ == "__main__":
     # Run MCP server with stdio transport (works with Claude Desktop, etc.)
