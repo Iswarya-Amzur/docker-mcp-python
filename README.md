@@ -2,35 +2,119 @@
 
 A Model Context Protocol (MCP) server that provides Docker containerization tools for applications. It can automatically detect, analyze, and dockerize both single services and multi-service projects (backend + frontend).
 
-## Features
+## 🚀 Version 2.0 - Streamlined & Simplified!
 
-### Single Service Tools
-1. **analyze_app** - Analyze application structure and dependencies
-2. **generate_docker_file** - Generate optimized Dockerfile for a service
-3. **build_image** - Build Docker image with real-time output
-4. **test_container** - Run tests inside a container
-5. **fix_errors** - Analyze and suggest fixes for containerization errors
-6. **get_container_logs** - Retrieve container logs for debugging
+**Now with only 7 essential tools** (down from 20!) - Each tool is a complete workflow, not a single step.
 
-### Multi-Service Tools
-7. **dockerize_project** - Automatically dockerize entire projects with backend + frontend
-8. **detect_project_services** - Detect all services in a project
+## The 7 Essential Tools
 
-### End-to-End Testing Tools 🧪
-9. **test_application_e2e** - Launch app in browser and run Playwright tests
-10. **create_playwright_tests** - Generate Playwright test templates
-11. **start_services** - Start docker-compose services
-12. **stop_services** - Stop docker-compose services
-13. **launch_app_in_browser** - Open app in browser window
+### 1. **dockerize_project** 🐳 - Complete Dockerization
+**Primary dockerization tool** - One command to dockerize everything!
+- Detects all services (backend, frontend, API, etc.)
+- Analyzes each service automatically
+- Generates optimized Dockerfiles
+- Creates docker-compose.yml
+- **Builds all images**
+- **Starts all containers**
+- **Waits for services to be ready**
+- Provides access URLs
 
-### Log Monitoring Tools (NEW! 📊)
-14. **setup_monitoring** - Setup Grafana/Loki/Promtail with auto-validation
-15. **show_logs** - Fetch and display logs (auto-validates connection)
-16. **analyze_logs** - AI-powered log analysis with fix suggestions
-17. **open_grafana** - Launch Grafana dashboard in browser
-18. **dockerize_and_monitor** - Complete workflow: dockerize + monitor + validate
-19. **validate_monitoring** - Validate Loki/Promtail connection and auto-fix issues
-20. **show_app_logs** - 🎯 SMART WORKFLOW: Complete end-to-end solution (analyze → dockerize → monitor → validate → launch → verify)
+**Use:** `dockerize_project(project_root="C:\\MyApp")`
+
+---
+
+### 2. **test_application_e2e** 🧪 - Comprehensive E2E Testing
+**Primary testing tool** - Launch browser with REAL user interactions!
+- Checks container status (starts if needed)
+- **Launches visible browser** (Chromium)
+- **Performs real interactions:**
+  - Clicks buttons
+  - Fills forms
+  - Creates items
+  - Navigates pages
+  - Submits forms
+- Takes before/after screenshots
+- Validates frontend-backend communication
+- **Keeps browser open 15 seconds for inspection**
+- Generates detailed test report
+
+**Use:** `test_application_e2e(project_root="C:\\MyApp")`
+
+---
+
+### 3. **show_app_logs** 📊 - Intelligent Log Monitoring
+**Primary monitoring tool** - One command to see logs in Grafana!
+- Dockerizes app if needed
+- Starts containers if needed
+- Sets up Grafana + Loki + Promtail
+- **Validates logs are flowing**
+- **Auto-fixes common issues** (Docker socket, config)
+- **Launches Grafana dashboard** (directly to logs page!)
+- Shows sample logs
+
+**Use:** `show_app_logs(project_root="C:\\MyApp")`
+
+---
+
+### 4. **analyze_logs** 🔍 - AI-Powered Log Analysis
+**Log analysis tool** - Find errors and get fix suggestions!
+- Fetches logs from Loki
+- Identifies errors, warnings, exceptions
+- Detects patterns (connection errors, syntax errors)
+- **Provides root cause analysis**
+- **Suggests code fixes**
+
+**Use:** `analyze_logs(service_name="backend")`
+
+---
+
+### 5. **fix_errors** 🔧 - Error Fixing
+**Error fixing tool** - Auto-fix Dockerfile issues!
+- Analyzes build/runtime errors
+- Identifies root cause
+- Suggests fixes
+- Can automatically apply fixes
+
+**Use:** `fix_errors(app_path="C:\\MyApp", error_message="...")`
+
+---
+
+### 6. **create_playwright_tests** 🎬 - Test Generation
+**Test generation tool** - Generate automated test suites!
+- Creates e2e-tests directory
+- Generates Playwright config
+- Creates sample tests (9+ scenarios)
+- Ready for CI/CD
+
+**Use:** `create_playwright_tests(project_root="C:\\MyApp")`
+
+---
+
+### 7. **detect_project_services** 🔎 - Service Detection
+**Inspection tool** - See what services your project has!
+- Scans project directory
+- Identifies all services
+- Analyzes technology stack
+- Shows structure
+
+**Use:** `detect_project_services(project_root="C:\\MyApp")`
+
+---
+
+## 🎯 Why Only 7 Tools?
+
+**Before:** 20 tools, unclear which to use, multiple steps required  
+**After:** 7 tools, each is a complete workflow, clear purpose
+
+**Example - Dockerization:**
+- ❌ Old: `analyze_app` → `generate_docker_file` → `build_image` → `start_services` (4 tools!)
+- ✅ New: `dockerize_project` (1 tool does everything!)
+
+**Example - Monitoring:**
+- ❌ Old: `setup_monitoring` → `validate_monitoring` → `show_logs` → `open_grafana` (4 tools!)
+- ✅ New: `show_app_logs` (1 tool does everything!)
+
+See [TOOL_CONSOLIDATION.md](docs/TOOL_CONSOLIDATION.md) for full details.
 
 ## Installation
 
@@ -78,20 +162,54 @@ Create `.vscode/mcp.json` in your workspace:
 
 ## Usage
 
-### Dockerizing a Full Project (Backend + Frontend)
+### 🚀 Complete Automated Workflow (NEW!)
 
-Use the **dockerize_project** tool with your project root:
+**One-Command Dockerization with Auto-Build & Auto-Start:**
 
-```
+```python
 dockerize_project(project_root="C:\\Users\\YourName\\MyProject")
 ```
 
-This will:
+This now does EVERYTHING automatically:
 1. ✅ Detect all services (backend, frontend, api, client, etc.)
 2. ✅ Analyze each service and determine its type (Python, Node.js, etc.)
 3. ✅ Generate optimized Dockerfiles for each service
 4. ✅ Create a unified `docker-compose.yml` that runs all services together
 5. ✅ Set up proper networking and port mappings
+6. ✅ **BUILD all Docker images** (NEW! ⚡)
+7. ✅ **START all containers** (NEW! 🚀)
+8. ✅ **WAIT for services to be ready** (NEW! ⏱️)
+9. ✅ **Display access URLs** (NEW! 🌐)
+
+**Your application is now RUNNING and ready to test!**
+
+---
+
+### 🧪 Automated E2E Testing with Browser Launch (NEW!)
+
+**One-Command Testing with Visible Browser & Real Interactions:**
+
+```python
+test_application_e2e(project_root="C:\\Users\\YourName\\MyProject")
+```
+
+This now:
+1. ✅ **Checks if containers are running** (skips rebuild if already running)
+2. ✅ **Starts containers if needed** (automatic)
+3. ✅ **Waits for services to be ready** (health checks)
+4. ✅ **LAUNCHES VISIBLE BROWSER** (Chromium window you can see!)
+5. ✅ **Loads your application** (navigates to frontend)
+6. ✅ **Performs REAL USER INTERACTIONS:**
+   - 🖱️ Clicks buttons
+   - ⌨️ Fills input fields
+   - ➕ Creates tasks/items
+   - 🔗 Tests navigation
+   - 📝 Submits forms
+7. ✅ **Takes before/after screenshots**
+8. ✅ **Keeps browser open 15 seconds** for inspection
+9. ✅ **Generates detailed report** with all interactions
+
+**You SEE the browser and watch it interact with your app in SLOW MOTION!**
 
 **Example Project Structure:**
 ```
@@ -111,33 +229,60 @@ MyProject/
 docker-compose up --build
 ```
 
-### End-to-End Testing with Playwright
+### 🎯 Real End-to-End Testing with ACTUAL User Interactions
 
-Test your dockerized application automatically:
+**NEW!** The testing tool now performs REAL user interactions, not just opening the page!
 
-1. **Generate test templates:**
-```
-create_playwright_tests(project_root="C:\\path\\to\\MyProject")
-```
-
-2. **Install Playwright (one time):**
-```bash
-cd MyProject/e2e-tests
-npm install
-npx playwright install
-```
-
-3. **Run complete E2E tests:**
+**One command to test everything:**
 ```
 test_application_e2e(project_root="C:\\path\\to\\MyProject")
 ```
 
-This will:
-- ✅ Start all services with docker-compose
-- ✅ Wait for services to be ready
-- ✅ Run Playwright tests against the running app
-- ✅ Generate a detailed test report
-- ✅ Clean up and stop services
+**What it does NOW:**
+- ✅ Starts all services with docker-compose
+- ✅ Waits for services to be ready
+- ✅ Opens browser (visible - you can watch!)
+- ✅ **CLICKS BUTTONS** like a real user 🖱️
+- ✅ **FILLS INPUT FIELDS** with test data ⌨️
+- ✅ **CREATES TASKS/ITEMS** in your app ➕
+- ✅ **NAVIGATES BETWEEN PAGES** 🔄
+- ✅ **SUBMITS FORMS** 📝
+- ✅ Takes before/after screenshots 📸
+- ✅ Provides detailed interaction report 📊
+- ✅ Proves your app works end-to-end! ✨
+
+**Sample Test Report:**
+```
+📊 Test Results: 8/8 passed
+
+🎬 User Interactions Performed:
+   • Clicked button: Add Task
+   • Filled field: "Enter task name" with "Test Task"
+   • Created new item via form
+   • Navigated to: About page
+   • Submitted form successfully
+
+📸 Screenshots saved:
+   - frontend_initial.png
+   - frontend_after_interactions.png
+```
+
+**For custom tests:**
+1. Generate test templates:
+   ```
+   create_playwright_tests(project_root="C:\\path\\to\\MyProject")
+   ```
+
+2. Install Playwright (one time):
+   ```bash
+   cd MyProject/e2e-tests
+   npm install
+   npx playwright install
+   ```
+
+3. Customize tests in `e2e-tests/tests/app.spec.js` for your specific app
+
+📖 **Full guide:** See `docs/REAL_E2E_TESTING.md` for detailed examples
 
 **Manual control:**
 ```

@@ -222,12 +222,14 @@ services:
     return compose_content
 
 
-def dockerize_full_project(project_root: str) -> str:
+def dockerize_full_project(project_root: str, auto_start: bool = True) -> str:
     """
-    Complete workflow: detect services, generate Dockerfiles, and create docker-compose.yml
+    Complete workflow: detect services, generate Dockerfiles, create docker-compose.yml,
+    and optionally build and start the containers.
     
     Args:
         project_root: Root directory of the project
+        auto_start: Automatically build and start containers (default: True)
         
     Returns:
         Summary of all operations
@@ -249,11 +251,13 @@ def dockerize_full_project(project_root: str) -> str:
     result += "\n**Step 2: Generating Dockerfiles...**\n"
     dockerfiles = generate_dockerfiles_for_services(services)
     
+    dockerfile_success = True
     for name, info in dockerfiles.items():
         if info['status'] == 'success':
             result += f"✅ {name}: Dockerfile created at {info['path']}\n"
         else:
             result += f"❌ {name}: {info['error']}\n"
+            dockerfile_success = False
     
     # Step 3: Generate docker-compose.yml
     result += "\n**Step 3: Generating docker-compose.yml...**\n"
@@ -263,18 +267,92 @@ def dockerize_full_project(project_root: str) -> str:
         result += f"✅ docker-compose.yml created at {os.path.join(project_root, 'docker-compose.yml')}\n"
     else:
         result += f"❌ {compose_content}\n"
+        dockerfile_success = False
     
-    # Step 4: Next steps
-    result += "\n**Next Steps:**\n"
-    result += f"1. Review the generated Dockerfiles in each service directory\n"
-    result += f"2. Update environment variables in docker-compose.yml as needed\n"
-    result += f"3. Build and run: `docker-compose up --build`\n"
-    result += f"4. Access services:\n"
+    # Step 4: Build and start containers (NEW!)
+    if auto_start and dockerfile_success:
+        result += "\n**Step 4: Building and Starting Containers...**\n"
+        result += "⏳ This may take a few minutes on first build...\n\n"
+        
+        try:
+            # Import here to avoid circular dependency
+            from .e2e_tester import start_docker_compose, wait_for_services
+            
+            # Start docker-compose with build
+            start_result = start_docker_compose(project_root, detached=True)
+            
+            if start_result["status"] == "success":
+                result += "✅ Containers built and started successfully!\n\n"
+                
+                # Wait for services to be ready
+                result += "**Step 5: Waiting for Services to be Ready...**\n"
+                
+                # Determine ports from services
+                backend_port = 8000
+                frontend_port = 3000
+                for name in services.keys():
+                    if name.lower() in ['backend', 'api', 'server']:
+                        backend_port = 8000
+                    elif name.lower() in ['frontend', 'client', 'web']:
+                        frontend_port = 3000
+                
+                wait_result = wait_for_services("localhost", backend_port, frontend_port, timeout=60)
+                
+                if wait_result["status"] in ["success", "partial"]:
+                    result += f"✅ Services are ready!\n"
+                    if wait_result.get("services"):
+                        for svc, ready in wait_result["services"].items():
+                            status = "✅" if ready else "⏳"
+                            result += f"   {status} {svc}\n"
+                    result += "\n"
+                else:
+                    result += f"⚠️  Some services may not be fully ready yet\n"
+                    result += f"   They might still be starting up...\n\n"
+                
+                # Show access URLs
+                result += "🚀 **Application is Running!**\n"
+                result += "="*60 + "\n"
+                for name in services.keys():
+                    if name.lower() in ['backend', 'api', 'server']:
+                        result += f"   🔧 Backend:  http://localhost:{backend_port}\n"
+                    elif name.lower() in ['frontend', 'client', 'web']:
+                        result += f"   🌐 Frontend: http://localhost:{frontend_port}\n"
+                result += "="*60 + "\n\n"
+                
+                result += "✨ **Next Steps:**\n"
+                result += f"   1. Test the application:\n"
+                result += f"      test_application_e2e(project_root=\"{project_root}\")\n\n"
+                result += f"   2. View logs:\n"
+                result += f"      show_app_logs(project_root=\"{project_root}\")\n\n"
+                result += f"   3. Open in browser manually:\n"
+                result += f"      launch_app_in_browser()\n\n"
+                
+            else:
+                result += f"❌ Failed to start containers\n"
+                result += f"   Error: {start_result.get('error', start_result.get('message'))}\n\n"
+                result += "🔧 **Manual Steps:**\n"
+                result += f"   1. Check docker-compose.yml configuration\n"
+                result += f"   2. Try manually: docker-compose up --build\n"
+                result += f"   3. Check logs: docker-compose logs\n"
+        
+        except Exception as e:
+            result += f"⚠️  Could not auto-start containers: {str(e)}\n\n"
+            result += "🔧 **Manual Steps:**\n"
+            result += f"   1. Build and run: docker-compose up --build\n"
+            result += f"   2. Then test: test_application_e2e(project_root=\"{project_root}\")\n"
     
-    for name in services.keys():
-        if name.lower() in ['backend', 'api', 'server']:
-            result += f"   - {name}: http://localhost:8000\n"
-        elif name.lower() in ['frontend', 'client', 'web']:
-            result += f"   - {name}: http://localhost:3000\n"
+    elif not auto_start:
+        # Step 4: Manual next steps (original behavior)
+        result += "\n**Next Steps:**\n"
+        result += f"1. Review the generated Dockerfiles in each service directory\n"
+        result += f"2. Update environment variables in docker-compose.yml as needed\n"
+        result += f"3. Build and run: `docker-compose up --build`\n"
+        result += f"4. Access services:\n"
+        
+        for name in services.keys():
+            if name.lower() in ['backend', 'api', 'server']:
+                result += f"   - {name}: http://localhost:8000\n"
+            elif name.lower() in ['frontend', 'client', 'web']:
+                result += f"   - {name}: http://localhost:3000\n"
     
     return result

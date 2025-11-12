@@ -1,6 +1,6 @@
 {
   "servers": {
-    "docker-mcp": {
+    "docker-mcp2": {
       "type": "stdio",
       "command": "python",
       "args": ["C:\\Users\\IswaryaK\\dockermcp-python\\docker-mcp\\docker-mcp\\server.py"],

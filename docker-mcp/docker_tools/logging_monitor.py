@@ -62,6 +62,7 @@ services:
     volumes:
       - /var/log:/var/log
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # CRITICAL: Docker socket access for service discovery
       - ./promtail-config.yml:/etc/promtail/config.yml
     command: -config.file=/etc/promtail/config.yml
     networks:
@@ -69,6 +70,8 @@ services:
     restart: unless-stopped
     depends_on:
       - loki
+    # Run with privileges to access Docker socket
+    privileged: true
 
 networks:
   monitoring:
@@ -192,9 +195,10 @@ providers:
     with open(provider_path, 'w') as f:
         f.write(provider_config)
     
-    # Create dashboard JSON
+    # Create dashboard JSON with proper UID for direct access
     dashboard = {
         "dashboard": {
+            "uid": "app-logs",  # Unique ID for direct URL access
             "title": "Application Logs",
             "tags": ["docker", "logs"],
             "timezone": "browser",
@@ -203,7 +207,7 @@ providers:
             "version": 0,
             "refresh": "5s"
         },
-        "overwrite": true
+        "overwrite": True  # Fixed: Python uses True, not true
     }
     
     # Add panel for each service
@@ -606,18 +610,24 @@ def setup_complete_monitoring(project_root: str, services: List[str]) -> str:
         report += "=" * 60 + "\n"
         report += "📊 **GRAFANA DASHBOARD READY!**\n"
         report += "=" * 60 + "\n\n"
-        report += f"🌐 Grafana URL: {start_result['grafana_url']}\n"
+        report += f"🌐 **Direct Dashboard Link:** {start_result['grafana_url']}/d/app-logs/application-logs\n"
+        report += f"📊 **Explore Logs:** {start_result['grafana_url']}/explore\n"
+        report += f"🏠 **Home Page:** {start_result['grafana_url']}\n\n"
         report += f"👤 Username: {start_result['credentials']['username']}\n"
         report += f"🔑 Password: {start_result['credentials']['password']}\n\n"
         report += f"📡 Loki URL: {start_result['loki_url']}\n\n"
         report += "**Next Steps:**\n"
-        report += "1. Open Grafana in your browser\n"
-        report += "2. Login with the credentials above\n"
-        report += "3. Navigate to Dashboards → Application Logs\n"
-        report += "4. View real-time logs from your services\n\n"
+        report += "1. Use open_grafana() to launch dashboard in browser\n"
+        report += "2. Or manually open: http://localhost:3001/d/app-logs/application-logs\n"
+        report += "3. Login with the credentials above\n"
+        report += "4. Dashboard will auto-refresh every 5 seconds with latest logs\n"
+        report += "5. Use Explore (left sidebar) for custom log queries\n\n"
         report += "**Services Monitored:**\n"
         for service in services:
             report += f"  - {service}\n"
+        
+        report += "\n💡 **Tip:** Logs may take 10-15 seconds to appear after container startup.\n"
+        report += "    Use validate_monitoring() to check log flow status.\n"
     else:
         report += f"❌ {start_result.get('message')}\n"
         if 'error' in start_result:
@@ -626,21 +636,62 @@ def setup_complete_monitoring(project_root: str, services: List[str]) -> str:
     return report
 
 
-def launch_grafana_dashboard(grafana_url: str = "http://localhost:3001") -> str:
+def launch_grafana_dashboard(grafana_url: str = "http://localhost:3001", open_dashboard: bool = True) -> str:
     """
     Open Grafana dashboard in the default browser.
+    NOW opens directly to the Application Logs dashboard instead of home page!
     
     Args:
-        grafana_url: URL of Grafana
+        grafana_url: URL of Grafana (base URL)
+        open_dashboard: If True, opens directly to Application Logs dashboard (default: True)
         
     Returns:
         Status message
     """
     try:
-        webbrowser.open(grafana_url)
-        return f"✅ Grafana dashboard opened in browser: {grafana_url}"
+        # Construct the direct dashboard URL
+        if open_dashboard:
+            # Direct link to Application Logs dashboard
+            # Uses Grafana's dashboard UID format: /d/<dashboard-uid>/<dashboard-slug>
+            dashboard_url = f"{grafana_url}/d/app-logs/application-logs?orgId=1&refresh=5s"
+            
+            # Alternatively, use explore view with Loki query for immediate log viewing
+            # This ensures logs are visible even if dashboard isn't loaded yet
+            explore_url = f"{grafana_url}/explore?orgId=1&left=%5B%22now-1h%22,%22now%22,%22Loki%22,%7B%22expr%22:%22%7Bjob%3D%5C%22docker%5C%22%7D%22%7D%5D"
+            
+            # Try dashboard first, fallback to explore
+            url_to_open = dashboard_url
+            
+            webbrowser.open(url_to_open)
+            
+            return f"""✅ Grafana dashboard opened in browser!
+
+🌐 **Dashboard URL:** {grafana_url}/d/app-logs/application-logs
+📊 **Explore Logs:** {grafana_url}/explore
+
+**Login Credentials:**
+   👤 Username: admin
+   🔑 Password: admin
+
+**What to do:**
+   1. Login with the credentials above
+   2. You should see the "Application Logs" dashboard
+   3. If redirected to home, click "Dashboards" → "Application Logs"
+   4. Or use Explore (left sidebar) → Select "Loki" → Query: {{job="docker"}}
+
+💡 Tip: The dashboard auto-refreshes every 5 seconds to show latest logs!"""
+        else:
+            webbrowser.open(grafana_url)
+            return f"✅ Grafana opened in browser: {grafana_url}"
+    
     except Exception as e:
-        return f"❌ Error opening browser: {str(e)}\nPlease open manually: {grafana_url}"
+        return f"""❌ Error opening browser: {str(e)}
+
+Please open manually:
+   🌐 Dashboard: {grafana_url}/d/app-logs/application-logs
+   📊 Explore: {grafana_url}/explore
+   
+Login: admin / admin"""
 
 
 def test_loki_connection(loki_url: str = "http://localhost:3100") -> Dict:
@@ -1277,22 +1328,45 @@ def smart_dockerize_and_show_logs(project_root: str, auto_fix: bool = True) -> s
             report += "⚠️  No automatic fixes available\n"
             report += "Manual intervention may be required\n\n"
     
-    # STEP 5: Launch Grafana Dashboard
+    # STEP 5: Wait for Logs to Flow (give Promtail time to collect)
     report += "=" * 60 + "\n"
-    report += "**STEP 5: Launching Grafana Dashboard...**\n\n"
+    report += "**STEP 5: Waiting for Logs to Flow...**\n\n"
+    
+    if not logs_flowing:
+        report += "Giving Promtail time to start collecting logs (15 seconds)...\n"
+        for i in range(3):
+            time.sleep(5)
+            report += f"  ⏳ Checking... ({(i+1)*5}s)\n"
+            
+            # Re-check log flow
+            diagnostics_recheck = diagnose_monitoring_stack(project_root)
+            logs_flowing = diagnostics_recheck["logs"].get("receiving_logs", False)
+            
+            if logs_flowing:
+                report += f"  ✅ Logs are now flowing! ({diagnostics_recheck['logs'].get('log_count', 0)} entries)\n"
+                break
+        
+        if not logs_flowing:
+            report += "  ⚠️  Still no logs detected. Containers may not be generating logs yet.\n"
+        report += "\n"
+    else:
+        report += "✅ Logs are already flowing to Loki\n\n"
+    
+    # STEP 6: Launch Grafana Dashboard (directly to logs page!)
+    report += "=" * 60 + "\n"
+    report += "**STEP 6: Launching Grafana Dashboard...**\n\n"
     
     try:
-        webbrowser.open("http://localhost:3001")
-        report += "✅ Grafana opened in browser: http://localhost:3001\n"
-        report += "   Username: admin\n"
-        report += "   Password: admin\n\n"
+        # Use the enhanced launch function that opens directly to dashboard
+        launch_result = launch_grafana_dashboard("http://localhost:3001", open_dashboard=True)
+        report += launch_result + "\n\n"
     except Exception as e:
         report += f"⚠️  Could not auto-open browser: {str(e)}\n"
-        report += "   Please open manually: http://localhost:3001\n\n"
+        report += "   Please open manually: http://localhost:3001/d/app-logs/application-logs\n\n"
     
-    # STEP 6: Verify Logs are Visible
+    # STEP 7: Verify Logs are Visible
     report += "=" * 60 + "\n"
-    report += "**STEP 6: Verifying Logs in Grafana...**\n\n"
+    report += "**STEP 7: Verifying Logs in Grafana...**\n\n"
     
     if logs_flowing:
         log_count = diagnostics["logs"].get("log_count", 0)

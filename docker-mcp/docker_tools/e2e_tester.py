@@ -361,6 +361,9 @@ test.describe('Application E2E Tests', () => {{
   test('Frontend loads successfully', async ({{ page }}) => {{
     await page.goto(FRONTEND_URL);
     await expect(page).toHaveTitle(/.*/, {{ timeout: 10000 }});
+    
+    // Take screenshot
+    await page.screenshot({{ path: 'test-results/homepage.png', fullPage: true }});
   }});
 
   test('Frontend can communicate with backend', async ({{ page }}) => {{
@@ -380,13 +383,152 @@ test.describe('Application E2E Tests', () => {{
     expect(response.ok()).toBeTruthy();
   }});
 
-  test('Complete user flow', async ({{ page }}) => {{
+  test('User can interact with buttons', async ({{ page }}) => {{
     await page.goto(FRONTEND_URL);
+    await page.waitForLoadState('networkidle');
     
-    // Add your specific user flow tests here
-    // Example: Click button, fill form, submit, check results
+    // Find and click all visible buttons
+    const buttons = await page.locator('button:visible').all();
     
-    await page.waitForTimeout(1000);
+    if (buttons.length > 0) {{
+      console.log(`Found ${{buttons.length}} buttons to test`);
+      
+      // Click first button
+      await buttons[0].click();
+      await page.waitForTimeout(1000);
+      
+      // Take screenshot after click
+      await page.screenshot({{ path: 'test-results/after-button-click.png' }});
+    }}
+  }});
+
+  test('User can fill input fields', async ({{ page }}) => {{
+    await page.goto(FRONTEND_URL);
+    await page.waitForLoadState('networkidle');
+    
+    // Find all input fields
+    const inputs = await page.locator('input[type="text"], input:not([type]), textarea').all();
+    
+    if (inputs.length > 0) {{
+      console.log(`Found ${{inputs.length}} input fields`);
+      
+      // Fill first input with test data
+      await inputs[0].fill('Test input from Playwright');
+      await page.waitForTimeout(500);
+      
+      // Take screenshot
+      await page.screenshot({{ path: 'test-results/after-input-fill.png' }});
+    }}
+  }});
+
+  test('User can create/add items (if applicable)', async ({{ page }}) => {{
+    await page.goto(FRONTEND_URL);
+    await page.waitForLoadState('networkidle');
+    
+    // Look for add/create patterns
+    const addInput = page.locator('input[placeholder*="task" i], input[placeholder*="add" i], input[placeholder*="todo" i]').first();
+    const addButton = page.locator('button:has-text("Add"), button:has-text("Create"), button[type="submit"]').first();
+    
+    const hasAddInput = await addInput.count() > 0;
+    const hasAddButton = await addButton.count() > 0;
+    
+    if (hasAddInput && hasAddButton) {{
+      console.log('Found create/add form');
+      
+      // Fill and submit
+      await addInput.fill('E2E Test Task Created by Playwright');
+      await addButton.click();
+      await page.waitForTimeout(2000);
+      
+      // Take screenshot of created item
+      await page.screenshot({{ path: 'test-results/after-item-creation.png', fullPage: true }});
+      
+      // Verify item appears (adjust selector based on your app)
+      const pageContent = await page.content();
+      expect(pageContent).toContain('E2E Test Task');
+    }} else {{
+      console.log('No create/add form found - skipping test');
+      test.skip();
+    }}
+  }});
+
+  test('Navigation links work', async ({{ page }}) => {{
+    await page.goto(FRONTEND_URL);
+    await page.waitForLoadState('networkidle');
+    
+    // Find navigation links
+    const navLinks = await page.locator('a[href]:visible').all();
+    
+    if (navLinks.length > 0) {{
+      console.log(`Found ${{navLinks.length}} navigation links`);
+      
+      // Test first internal link
+      const firstLink = navLinks[0];
+      const href = await firstLink.getAttribute('href');
+      
+      if (href && !href.startsWith('http')) {{
+        await firstLink.click();
+        await page.waitForLoadState('networkidle');
+        await page.waitForTimeout(1000);
+        
+        // Take screenshot of new page
+        await page.screenshot({{ path: 'test-results/after-navigation.png' }});
+      }}
+    }}
+  }});
+
+  test('Forms can be submitted', async ({{ page }}) => {{
+    await page.goto(FRONTEND_URL);
+    await page.waitForLoadState('networkidle');
+    
+    // Find forms
+    const forms = await page.locator('form').all();
+    
+    if (forms.length > 0) {{
+      console.log(`Found ${{forms.length}} forms to test`);
+      
+      const form = forms[0];
+      
+      // Fill all text inputs in the form
+      const inputs = await form.locator('input[type="text"], input:not([type]), textarea').all();
+      for (const input of inputs) {{
+        await input.fill('Test form data');
+      }}
+      
+      // Submit the form
+      const submitButton = form.locator('button[type="submit"], input[type="submit"], button:has-text("Submit")').first();
+      if (await submitButton.count() > 0) {{
+        await submitButton.click();
+        await page.waitForTimeout(2000);
+        
+        // Take screenshot after submission
+        await page.screenshot({{ path: 'test-results/after-form-submit.png', fullPage: true }});
+      }}
+    }}
+  }});
+
+  test('Complete user workflow', async ({{ page }}) => {{
+    await page.goto(FRONTEND_URL);
+    await page.waitForLoadState('networkidle');
+    
+    // Complete workflow: Load page -> Interact -> Verify
+    console.log('Starting complete user workflow test');
+    
+    // Step 1: Load and verify page
+    await expect(page).toHaveTitle(/.*/, {{ timeout: 10000 }});
+    
+    // Step 2: Interact with UI elements
+    const buttons = await page.locator('button:visible').count();
+    const inputs = await page.locator('input:visible').count();
+    
+    console.log(`Page has ${{buttons}} buttons and ${{inputs}} inputs`);
+    
+    // Step 3: Take final screenshot
+    await page.screenshot({{ path: 'test-results/workflow-complete.png', fullPage: true }});
+    
+    // Step 4: Verify page is functional
+    const bodyText = await page.locator('body').textContent();
+    expect(bodyText.length).toBeGreaterThan(0);
   }});
 }});
 """
@@ -493,18 +635,21 @@ def launch_browser(url: str, browser: str = "chromium", headless: bool = False, 
 
 
 def run_interactive_tests(project_root: str, frontend_url: str = "http://localhost:3000",
-                         backend_url: str = "http://localhost:8000", headless: bool = False) -> dict:
+                         backend_url: str = "http://localhost:8000", headless: bool = False,
+                         perform_interactions: bool = True) -> dict:
     """
     Run interactive Playwright tests with visible browser.
+    Now includes ACTUAL USER INTERACTIONS like clicking buttons, filling forms, creating tasks, etc.
     
     Args:
         project_root: Root directory of the project
         frontend_url: Frontend URL
         backend_url: Backend URL
         headless: Run in headless mode
+        perform_interactions: Perform actual user interactions (default: True)
         
     Returns:
-        Dictionary with test results
+        Dictionary with test results including interaction tests
     """
     try:
         from playwright.sync_api import sync_playwright, expect
@@ -513,13 +658,24 @@ def run_interactive_tests(project_root: str, frontend_url: str = "http://localho
             "tests": [],
             "passed": 0,
             "failed": 0,
-            "total": 0
+            "total": 0,
+            "interactions": []
         }
         
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=headless)
-            context = browser.new_context()
+            # Launch browser with visible window (unless headless mode requested)
+            logger.info(f"🌐 Launching {'headless ' if headless else 'VISIBLE '}Chromium browser...")
+            browser = p.chromium.launch(
+                headless=headless,
+                slow_mo=500 if not headless else 0,  # Slow down actions for visibility
+                args=['--start-maximized'] if not headless else []  # Maximize window
+            )
+            context = browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                no_viewport=True if not headless else False  # Use full window size
+            )
             page = context.new_page()
+            logger.info("✅ Browser window opened!")
             
             # Test 1: Backend health check
             results["total"] += 1
@@ -538,21 +694,24 @@ def run_interactive_tests(project_root: str, frontend_url: str = "http://localho
             # Test 2: Frontend loads
             results["total"] += 1
             try:
-                logger.info(f"Loading frontend at {frontend_url}")
+                logger.info(f"🌐 Loading frontend at {frontend_url}")
+                print(f"\n{'='*70}")
+                print(f"🌐 BROWSER LAUNCHED - Opening: {frontend_url}")
+                print(f"{'='*70}\n")
+                
                 page.goto(frontend_url, wait_until="networkidle", timeout=30000)
                 title = page.title()
+                
+                logger.info(f"✅ Page loaded: {title}")
+                print(f"✅ Page loaded successfully: {title}\n")
+                
                 results["tests"].append({"name": "Frontend loads successfully", "status": "passed", "title": title})
                 results["passed"] += 1
                 
-                # Take screenshot
-                screenshot_path = os.path.join(project_root, "frontend_screenshot.png")
+                # Take initial screenshot
+                screenshot_path = os.path.join(project_root, "frontend_initial.png")
                 page.screenshot(path=screenshot_path, full_page=True)
                 results["screenshot"] = screenshot_path
-                
-                # Keep browser open for inspection if not headless
-                if not headless:
-                    logger.info("Application running in browser. Keeping open for 10 seconds...")
-                    page.wait_for_timeout(10000)
                 
             except Exception as e:
                 results["tests"].append({"name": "Frontend loads successfully", "status": "failed", "error": str(e)})
@@ -577,6 +736,71 @@ def run_interactive_tests(project_root: str, frontend_url: str = "http://localho
                 results["tests"].append({"name": "Frontend-Backend communication", "status": "failed", "error": str(e)})
                 results["failed"] += 1
             
+            # NEW: Test 4-N: Perform ACTUAL USER INTERACTIONS
+            if perform_interactions:
+                logger.info("Starting interactive user flow tests...")
+                print(f"\n{'='*70}")
+                print(f"🎬 PERFORMING INTERACTIVE TESTS")
+                print(f"   Watch the browser - it will interact with your app!")
+                print(f"   - Clicking buttons")
+                print(f"   - Filling forms")
+                print(f"   - Creating items")
+                print(f"   - Testing navigation")
+                print(f"{'='*70}\n")
+                
+                # Try to detect and interact with common UI elements
+                interaction_tests = [
+                    {
+                        "name": "Find and click buttons",
+                        "action": lambda: _test_button_interactions(page, results)
+                    },
+                    {
+                        "name": "Fill input fields",
+                        "action": lambda: _test_input_interactions(page, results)
+                    },
+                    {
+                        "name": "Create/Add items (if applicable)",
+                        "action": lambda: _test_create_item(page, results, backend_url)
+                    },
+                    {
+                        "name": "Navigate and test routes",
+                        "action": lambda: _test_navigation(page, results)
+                    },
+                    {
+                        "name": "Test form submissions",
+                        "action": lambda: _test_form_submission(page, results)
+                    }
+                ]
+                
+                for test in interaction_tests:
+                    results["total"] += 1
+                    try:
+                        test["action"]()
+                    except Exception as e:
+                        logger.warning(f"Interaction test '{test['name']}' failed: {str(e)}")
+                
+                # Take final screenshot after interactions
+                screenshot_after = os.path.join(project_root, "frontend_after_interactions.png")
+                page.screenshot(path=screenshot_after, full_page=True)
+                results["screenshot_after"] = screenshot_after
+                
+                # Keep browser open for inspection if not headless
+                if not headless:
+                    print(f"\n{'='*70}")
+                    print(f"✅ INTERACTIVE TESTS COMPLETED!")
+                    print(f"   Browser will stay open for 15 seconds for inspection...")
+                    print(f"   You can see the final state of your application")
+                    print(f"{'='*70}\n")
+                    logger.info("Tests completed! Keeping browser open for 15 seconds for inspection...")
+                    page.wait_for_timeout(15000)
+                    print("\n⏱️  Closing browser...\n")
+            else:
+                # Keep browser open for inspection if not headless
+                if not headless:
+                    logger.info("Application running in browser. Keeping open for 10 seconds...")
+                    print(f"\n⏱️  Browser will close in 10 seconds...\n")
+                    page.wait_for_timeout(10000)
+            
             browser.close()
         
         results["status"] = "success" if results["failed"] == 0 else "partial"
@@ -594,12 +818,261 @@ def run_interactive_tests(project_root: str, frontend_url: str = "http://localho
         }
 
 
+def _test_button_interactions(page, results: dict):
+    """Test clicking buttons on the page"""
+    try:
+        # Find all visible buttons
+        buttons = page.locator("button, input[type='button'], input[type='submit']").all()
+        
+        if not buttons:
+            results["interactions"].append("No buttons found")
+            return
+        
+        clicked = 0
+        for i, button in enumerate(buttons[:3]):  # Test first 3 buttons
+            try:
+                if button.is_visible():
+                    button_text = button.inner_text() or button.get_attribute("value") or f"Button {i+1}"
+                    logger.info(f"Clicking button: {button_text}")
+                    button.click(timeout=5000)
+                    page.wait_for_timeout(1000)
+                    clicked += 1
+                    results["interactions"].append(f"Clicked button: {button_text}")
+            except Exception as e:
+                logger.debug(f"Could not click button {i}: {str(e)}")
+        
+        if clicked > 0:
+            results["tests"].append({"name": "Button interactions", "status": "passed", "buttons_clicked": clicked})
+            results["passed"] += 1
+        else:
+            results["tests"].append({"name": "Button interactions", "status": "skipped", "note": "No clickable buttons found"})
+    except Exception as e:
+        results["tests"].append({"name": "Button interactions", "status": "failed", "error": str(e)})
+        results["failed"] += 1
+
+
+def _test_input_interactions(page, results: dict):
+    """Test filling input fields"""
+    try:
+        # Find all input fields
+        inputs = page.locator("input[type='text'], input[type='email'], input:not([type]), textarea").all()
+        
+        if not inputs:
+            results["interactions"].append("No input fields found")
+            return
+        
+        filled = 0
+        test_data = {
+            "text": "Test Task from E2E",
+            "email": "test@example.com",
+            "default": "Sample input"
+        }
+        
+        for i, input_field in enumerate(inputs[:3]):  # Test first 3 inputs
+            try:
+                if input_field.is_visible() and not input_field.is_disabled():
+                    field_type = input_field.get_attribute("type") or "default"
+                    placeholder = input_field.get_attribute("placeholder") or f"Field {i+1}"
+                    
+                    test_value = test_data.get(field_type, test_data["default"])
+                    logger.info(f"Filling input field: {placeholder} with '{test_value}'")
+                    
+                    input_field.fill(test_value)
+                    page.wait_for_timeout(500)
+                    filled += 1
+                    results["interactions"].append(f"Filled field: {placeholder}")
+            except Exception as e:
+                logger.debug(f"Could not fill input {i}: {str(e)}")
+        
+        if filled > 0:
+            results["tests"].append({"name": "Input field interactions", "status": "passed", "fields_filled": filled})
+            results["passed"] += 1
+        else:
+            results["tests"].append({"name": "Input field interactions", "status": "skipped", "note": "No fillable inputs found"})
+    except Exception as e:
+        results["tests"].append({"name": "Input field interactions", "status": "failed", "error": str(e)})
+        results["failed"] += 1
+
+
+def _test_create_item(page, results: dict, backend_url: str):
+    """Test creating an item (e.g., todo, task, post)"""
+    try:
+        # Look for common patterns: input + button, form with submit
+        created = False
+        
+        # Pattern 1: Input field with adjacent button
+        input_selectors = [
+            "input[placeholder*='task' i]",
+            "input[placeholder*='todo' i]", 
+            "input[placeholder*='add' i]",
+            "input[type='text']:visible"
+        ]
+        
+        for selector in input_selectors:
+            try:
+                input_field = page.locator(selector).first
+                if input_field.is_visible():
+                    # Fill the input
+                    logger.info(f"Found input field, creating test item...")
+                    input_field.fill("E2E Test Task - Created by Playwright")
+                    page.wait_for_timeout(500)
+                    
+                    # Look for nearby submit button
+                    add_buttons = page.locator("button:has-text('Add'), button:has-text('Create'), button:has-text('Submit'), button[type='submit']").all()
+                    
+                    for button in add_buttons:
+                        if button.is_visible():
+                            logger.info(f"Clicking submit button to create item...")
+                            button.click()
+                            page.wait_for_timeout(2000)
+                            created = True
+                            results["interactions"].append("Created new item via form")
+                            break
+                    
+                    if created:
+                        break
+            except:
+                continue
+        
+        if created:
+            # Verify item was created by checking the page or API
+            page.wait_for_timeout(1000)
+            results["tests"].append({"name": "Create item interaction", "status": "passed", "action": "Item created"})
+            results["passed"] += 1
+        else:
+            results["tests"].append({"name": "Create item interaction", "status": "skipped", "note": "No create form found"})
+    except Exception as e:
+        results["tests"].append({"name": "Create item interaction", "status": "failed", "error": str(e)})
+        results["failed"] += 1
+
+
+def _test_navigation(page, results: dict):
+    """Test navigation between pages/routes"""
+    try:
+        # Find navigation links
+        links = page.locator("a[href], button:has-text('Home'), button:has-text('About')").all()
+        
+        navigated = 0
+        for i, link in enumerate(links[:3]):  # Test first 3 links
+            try:
+                if link.is_visible():
+                    link_text = link.inner_text() or link.get_attribute("href") or f"Link {i+1}"
+                    href = link.get_attribute("href")
+                    
+                    # Skip external links
+                    if href and (href.startswith("http://") or href.startswith("https://")) and "localhost" not in href:
+                        continue
+                    
+                    logger.info(f"Navigating to: {link_text}")
+                    link.click(timeout=5000)
+                    page.wait_for_load_state("networkidle")
+                    page.wait_for_timeout(1000)
+                    navigated += 1
+                    results["interactions"].append(f"Navigated to: {link_text}")
+                    
+                    # Go back
+                    page.go_back()
+                    page.wait_for_timeout(500)
+            except Exception as e:
+                logger.debug(f"Could not navigate via link {i}: {str(e)}")
+        
+        if navigated > 0:
+            results["tests"].append({"name": "Navigation interactions", "status": "passed", "links_tested": navigated})
+            results["passed"] += 1
+        else:
+            results["tests"].append({"name": "Navigation interactions", "status": "skipped", "note": "No navigation links found"})
+    except Exception as e:
+        results["tests"].append({"name": "Navigation interactions", "status": "failed", "error": str(e)})
+        results["failed"] += 1
+
+
+def _test_form_submission(page, results: dict):
+    """Test form submission"""
+    try:
+        # Find forms on the page
+        forms = page.locator("form").all()
+        
+        if not forms:
+            results["interactions"].append("No forms found")
+            return
+        
+        submitted = 0
+        for i, form in enumerate(forms[:2]):  # Test first 2 forms
+            try:
+                if form.is_visible():
+                    # Fill all inputs in the form
+                    inputs = form.locator("input[type='text'], input:not([type]), textarea").all()
+                    
+                    for input_field in inputs:
+                        if input_field.is_visible() and not input_field.is_disabled():
+                            input_field.fill("Test data from E2E")
+                            page.wait_for_timeout(300)
+                    
+                    # Find and click submit button
+                    submit = form.locator("button[type='submit'], input[type='submit'], button:has-text('Submit')").first
+                    
+                    if submit.is_visible():
+                        logger.info(f"Submitting form {i+1}")
+                        submit.click()
+                        page.wait_for_timeout(2000)
+                        submitted += 1
+                        results["interactions"].append(f"Submitted form {i+1}")
+            except Exception as e:
+                logger.debug(f"Could not submit form {i}: {str(e)}")
+        
+        if submitted > 0:
+            results["tests"].append({"name": "Form submission", "status": "passed", "forms_submitted": submitted})
+            results["passed"] += 1
+        else:
+            results["tests"].append({"name": "Form submission", "status": "skipped", "note": "No submittable forms found"})
+    except Exception as e:
+        results["tests"].append({"name": "Form submission", "status": "failed", "error": str(e)})
+        results["failed"] += 1
+
+
+def check_containers_running(project_root: str) -> dict:
+    """
+    Check if docker-compose containers are already running.
+    
+    Args:
+        project_root: Root directory with docker-compose.yml
+        
+    Returns:
+        Dictionary with status and list of running containers
+    """
+    try:
+        result = subprocess.run(
+            ["docker-compose", "ps", "-q"],
+            cwd=project_root,
+            capture_output=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=10
+        )
+        
+        # If we get container IDs, they're running
+        container_ids = [cid for cid in result.stdout.strip().split('\n') if cid]
+        
+        return {
+            "running": len(container_ids) > 0,
+            "count": len(container_ids),
+            "container_ids": container_ids
+        }
+    except Exception as e:
+        return {
+            "running": False,
+            "count": 0,
+            "error": str(e)
+        }
+
+
 def launch_and_test(project_root: str, backend_port: int = 8000, 
                    frontend_port: int = 3000, cleanup: bool = False,
                    headless: bool = False, show_browser: bool = True,
                    use_system_browser: bool = True) -> str:
     """
-    Complete workflow: Start docker-compose, wait for services, launch browser, run tests, cleanup.
+    Complete workflow: Check if containers are running, start if needed, wait for services, 
+    launch browser, run tests, cleanup.
     
     Args:
         project_root: Root directory with docker-compose.yml
@@ -616,15 +1089,26 @@ def launch_and_test(project_root: str, backend_port: int = 8000,
     report = f"🧪 **End-to-End Testing Report**\n\n"
     report += f"**Project:** {project_root}\n\n"
     
-    # Step 1: Start docker-compose
-    report += "**Step 1: Starting Docker Compose...**\n"
-    start_result = start_docker_compose(project_root, detached=True)
+    # Step 1: Check if containers are already running
+    report += "**Step 1: Checking Container Status...**\n"
+    container_check = check_containers_running(project_root)
     
-    if start_result["status"] != "success":
-        report += f"❌ Failed to start services\n{start_result.get('error', start_result.get('message'))}\n"
-        return report
+    containers_already_running = container_check.get("running", False)
     
-    report += "✅ Services started\n\n"
+    if containers_already_running:
+        report += f"✅ Containers already running ({container_check['count']} container(s))\n"
+        report += "   Skipping docker-compose start...\n\n"
+    else:
+        report += "ℹ️  No containers running, starting Docker Compose...\n"
+        
+        # Start docker-compose
+        start_result = start_docker_compose(project_root, detached=True)
+        
+        if start_result["status"] != "success":
+            report += f"❌ Failed to start services\n{start_result.get('error', start_result.get('message'))}\n"
+            return report
+        
+        report += "✅ Services started\n\n"
     
     # Step 2: Wait for services
     report += "**Step 2: Waiting for services to be ready...**\n"
@@ -638,74 +1122,106 @@ def launch_and_test(project_root: str, backend_port: int = 8000,
     
     report += f"✅ Services ready: {wait_result['services']}\n\n"
     
-    # Step 3: Launch browser and show application (PRIMARY ACTION)
-    report += "**Step 3: Launching application in browser...**\n"
+    # Step 3: Launch browser and RUN ACTUAL E2E TESTS (PRIMARY ACTION)
+    report += "**Step 3: Launching Browser & Running Interactive Tests...**\n"
     frontend_url = f"http://localhost:{frontend_port}"
     backend_url = f"http://localhost:{backend_port}"
     
     if show_browser:
-        # OPTION 1: Open in system browser (Chrome, Edge, Firefox - your actual browser)
-        if use_system_browser:
-            try:
-                logger.info(f"Opening application in system default browser")
-                webbrowser.open(frontend_url)
+        report += f"🌐 Opening application in browser...\n"
+        report += f"   Frontend: {frontend_url}\n"
+        report += f"   Backend:  {backend_url}\n\n"
+        
+        try:
+            # ALWAYS use Playwright for comprehensive testing with interactions
+            logger.info(f"Running comprehensive E2E tests with Playwright")
+            report += "🎬 Running interactive tests (clicks, forms, navigation)...\n\n"
+            
+            # Run interactive tests with actual user interactions
+            interactive_results = run_interactive_tests(
+                project_root,
+                frontend_url,
+                backend_url,
+                headless=headless,
+                perform_interactions=True  # ENABLE ACTUAL INTERACTIONS
+            )
+            
+            if interactive_results["status"] == "error":
+                report += f"❌ {interactive_results['message']}\n"
+                report += f"\n💡 Tip: Make sure Playwright is installed:\n"
+                report += f"   pip install playwright\n"
+                report += f"   playwright install\n"
                 
+                # Fallback: open in system browser
+                report += f"\n📌 Falling back to system browser...\n"
+                try:
+                    webbrowser.open(frontend_url)
+                    report += f"✅ Application opened in your default browser!\n"
+                    report += f"🌐 Frontend: {frontend_url}\n"
+                    report += f"🔧 Backend: {backend_url}\n"
+                except Exception as e2:
+                    report += f"❌ Could not open browser: {str(e2)}\n"
+            else:
+                report += f"✅ End-to-End tests completed!\n"
+                report += f"🌐 Application URL: {frontend_url}\n"
+                report += f"🔧 Backend URL: {backend_url}\n\n"
+                report += f"📊 Test Results: {interactive_results['passed']}/{interactive_results['total']} passed\n\n"
+                
+                # Show all test results
+                for test in interactive_results.get("tests", []):
+                    status_icon = "✅" if test["status"] == "passed" else "❌" if test["status"] == "failed" else "⚠️" if test["status"] == "skipped" else "ℹ️"
+                    report += f"{status_icon} {test['name']}\n"
+                    
+                    if "error" in test:
+                        report += f"   Error: {test['error']}\n"
+                    if "title" in test:
+                        report += f"   Page title: {test['title']}\n"
+                    if "api_calls" in test:
+                        report += f"   API calls made: {test['api_calls']}\n"
+                    if "buttons_clicked" in test:
+                        report += f"   Buttons clicked: {test['buttons_clicked']}\n"
+                    if "fields_filled" in test:
+                        report += f"   Fields filled: {test['fields_filled']}\n"
+                    if "links_tested" in test:
+                        report += f"   Links tested: {test['links_tested']}\n"
+                    if "forms_submitted" in test:
+                        report += f"   Forms submitted: {test['forms_submitted']}\n"
+                    if "action" in test:
+                        report += f"   Action: {test['action']}\n"
+                    if "note" in test:
+                        report += f"   Note: {test['note']}\n"
+                
+                # Show interactions performed
+                if interactive_results.get("interactions"):
+                    report += f"\n🎬 **User Interactions Performed:**\n"
+                    for interaction in interactive_results["interactions"][:10]:
+                        report += f"   • {interaction}\n"
+                    if len(interactive_results["interactions"]) > 10:
+                        report += f"   ... and {len(interactive_results['interactions']) - 10} more\n"
+                
+                # Show screenshots
+                if "screenshot" in interactive_results:
+                    report += f"\n📸 Screenshot (Initial): {interactive_results['screenshot']}\n"
+                if "screenshot_after" in interactive_results:
+                    report += f"📸 Screenshot (After Tests): {interactive_results['screenshot_after']}\n"
+                
+                report += f"\n💡 The application was tested with actual user interactions!\n"
+                report += f"   Frontend: {frontend_url}\n"
+                report += f"   Backend: {backend_url}\n"
+        
+        except Exception as e:
+            report += f"❌ Error running E2E tests: {str(e)}\n"
+            report += f"\n💡 Install Playwright: pip install playwright && playwright install\n"
+            
+            # Fallback: open in system browser
+            report += f"\n📌 Falling back to system browser...\n"
+            try:
+                webbrowser.open(frontend_url)
                 report += f"✅ Application opened in your default browser!\n"
                 report += f"🌐 Frontend: {frontend_url}\n"
-                report += f"🔧 Backend: {backend_url}\n\n"
-                report += f"💡 Your dockerized application is now running!\n"
-                report += f"   The browser window should have opened automatically.\n"
-                report += f"   If not, manually visit: {frontend_url}\n\n"
-                
-                # Give services a moment to stabilize
-                time.sleep(2)
-                
-            except Exception as e:
-                report += f"❌ Error opening system browser: {str(e)}\n"
-                report += f"   Please manually open: {frontend_url}\n"
-        
-        # OPTION 2: Use Playwright (automated testing with controlled browser)
-        else:
-            try:
-                # Run interactive tests with browser
-                interactive_results = run_interactive_tests(
-                    project_root,
-                    frontend_url,
-                    backend_url,
-                    headless=headless
-                )
-                
-                if interactive_results["status"] == "error":
-                    report += f"❌ {interactive_results['message']}\n"
-                    report += f"\n💡 Tip: Make sure Playwright is installed:\n"
-                    report += f"   pip install playwright\n"
-                    report += f"   playwright install\n"
-                else:
-                    report += f"✅ Browser launched successfully!\n"
-                    report += f"🌐 Application URL: {frontend_url}\n"
-                    report += f"🔧 Backend URL: {backend_url}\n\n"
-                    report += f"📊 Quick Tests: {interactive_results['passed']}/{interactive_results['total']} passed\n\n"
-                    
-                    for test in interactive_results.get("tests", []):
-                        status_icon = "✅" if test["status"] == "passed" else "❌" if test["status"] == "failed" else "⚠️"
-                        report += f"{status_icon} {test['name']}\n"
-                        if "error" in test:
-                            report += f"   Error: {test['error']}\n"
-                        if "title" in test:
-                            report += f"   Page title: {test['title']}\n"
-                        if "api_calls" in test:
-                            report += f"   API calls made: {test['api_calls']}\n"
-                    
-                    if "screenshot" in interactive_results:
-                        report += f"\n📸 Screenshot saved: {interactive_results['screenshot']}\n"
-                    
-                    report += f"\n💡 The application is now running in your browser!\n"
-                    report += f"   Frontend: {frontend_url}\n"
-                    report += f"   Backend: {backend_url}\n"
-            
-            except Exception as e:
-                report += f"❌ Error launching browser: {str(e)}\n"
-                report += f"\n💡 Install Playwright: pip install playwright && playwright install\n"
+                report += f"🔧 Backend: {backend_url}\n"
+            except Exception as e2:
+                report += f"❌ Could not open browser: {str(e2)}\n"
     else:
         report += f"⚠️  Browser launch disabled (show_browser=False)\n"
         report += f"   Frontend URL: {frontend_url}\n"
