@@ -33,7 +33,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize MCP server
-mcp = FastMCP("Amzure Docker MCP", version="1.0.0")
+mcp = FastMCP("Amzur Docker MCP", version="1.0.0")
 
 # Tool 1: Analyze Application Structure
 @mcp.tool()

@@ -18,7 +18,7 @@ setup(
     name="docker-mcp-server",
     version="1.0.0",
     author="Iswarya Amzur",
-    author_email="your.email@example.com",
+    author_email="iswarya.kolimalla@amzur.com",
     description="MCP server for Docker containerization with intelligent monitoring",
     long_description=long_description,
     long_description_content_type="text/markdown",

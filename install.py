@@ -9,7 +9,7 @@ This script:
 4. Provides setup instructions
 
 Usage:
-    python install.py [--ide claude|vscode|all]
+    python install.py [--ide claude|vscode|cursor|all]
 """
 
 import os
@@ -45,6 +45,9 @@ class MCPInstaller:
         # VS Code (current workspace)
         # Note: This will be relative to where the script is run
         configs["vscode"] = Path.cwd() / ".vscode" / "mcp.json"
+        
+        # Cursor (uses same format as VS Code)
+        configs["cursor"] = Path.cwd() / ".vscode" / "mcp.json"
         
         return configs
     
@@ -103,6 +106,10 @@ class MCPInstaller:
             }
         }
     
+    def create_cursor_config(self) -> Dict:
+        """Create Cursor IDE MCP configuration (same format as VS Code)"""
+        return self.create_vscode_config()
+    
     def update_config(self, ide: str) -> bool:
         """Update configuration file for specified IDE"""
         config_path = self.configs.get(ide)
@@ -138,6 +145,11 @@ class MCPInstaller:
             existing_config["mcpServers"]["docker-mcp"] = new_config["mcpServers"]["docker-mcp"]
         elif ide == "vscode":
             new_config = self.create_vscode_config()
+            if "servers" not in existing_config:
+                existing_config["servers"] = {}
+            existing_config["servers"]["docker-mcp"] = new_config["servers"]["docker-mcp"]
+        elif ide == "cursor":
+            new_config = self.create_cursor_config()
             if "servers" not in existing_config:
                 existing_config["servers"] = {}
             existing_config["servers"]["docker-mcp"] = new_config["servers"]["docker-mcp"]
@@ -192,6 +204,12 @@ class MCPInstaller:
             print("   2. Open the MCP panel")
             print("   3. Docker MCP should be listed")
         
+        if "cursor" in configured_ides:
+            print("\n🖱️  CURSOR IDE:")
+            print("   1. Reload Cursor window (Ctrl+Shift+P → 'Reload Window')")
+            print("   2. Open the MCP panel")
+            print("   3. Docker MCP should be listed")
+        
         print("\n📚 DOCUMENTATION:")
         print("   - README.md - Full documentation")
         print("   - WORKFLOW_GUIDE.md - Smart workflow guide")
@@ -215,7 +233,7 @@ def main():
     )
     parser.add_argument(
         "--ide",
-        choices=["claude", "vscode", "all"],
+        choices=["claude", "vscode", "cursor", "all"],
         default="all",
         help="IDE to configure (default: all)"
     )
@@ -249,7 +267,7 @@ def main():
     configured_ides = []
     
     if args.ide == "all":
-        for ide in ["claude", "vscode"]:
+        for ide in ["claude", "vscode", "cursor"]:
             if installer.update_config(ide):
                 configured_ides.append(ide)
     else:
