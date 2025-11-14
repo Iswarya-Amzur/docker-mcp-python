@@ -7,14 +7,14 @@ def fix_containerization_errors(app_path: str, error_message: str,
     
     fixes = {}
     
-    # Common error patterns and fixes
+    # Common error patterns and fixes (ENHANCED)
     error_patterns = {
         r"No such file or directory": {
             "issue": "File path is incorrect or missing",
             "fix": "Check file paths in COPY/ADD commands",
             "action": "Verify all files exist in the build context"
         },
-        r"ModuleNotFoundError": {
+        r"ModuleNotFoundError|ImportError": {
             "issue": "Python module not found",
             "fix": "Add missing package to requirements.txt",
             "action": "Install package in Dockerfile before copying code"
@@ -29,15 +29,55 @@ def fix_containerization_errors(app_path: str, error_message: str,
             "fix": "Add proper permission setup in Dockerfile",
             "action": "Use 'chmod' or run as correct user"
         },
-        r"Port.*already in use": {
+        r"Port.*already in use|address already in use": {
             "issue": "Port binding conflict",
             "fix": "Use different port or stop existing container",
-            "action": "Change exposed port in Dockerfile"
+            "action": "Change exposed port in Dockerfile or docker-compose.yml"
         },
-        r"out of memory": {
+        r"out of memory|OOM": {
             "issue": "Container ran out of memory",
             "fix": "Increase memory limit or optimize code",
-            "action": "Run with: docker run -m 2g <image>"
+            "action": "Run with: docker run -m 2g <image> or add mem_limit in docker-compose.yml"
+        },
+        r"connection.*refused|connection.*timeout": {
+            "issue": "Service connection failed",
+            "fix": "Check if service is running and ports are correct",
+            "action": "Verify docker-compose.yml port mappings and service dependencies"
+        },
+        r"playwright.*not installed|playwright.*not found": {
+            "issue": "Playwright not installed",
+            "fix": "Install Playwright and browsers",
+            "action": "Run: pip install playwright && playwright install"
+        },
+        r"grafana.*not.*ready|loki.*not.*ready|promtail.*not.*ready": {
+            "issue": "Monitoring service not ready",
+            "fix": "Wait for services to start or check configuration",
+            "action": "Check docker logs for grafana/loki/promtail and verify docker-compose.monitoring.yml"
+        },
+        r"no logs.*detected|logs.*not.*flowing": {
+            "issue": "Logs not appearing in Grafana",
+            "fix": "Check Promtail configuration and Docker socket access",
+            "action": "Verify promtail-config.yml and ensure Docker socket is mounted correctly"
+        },
+        r"screenshot.*failed|capture.*error": {
+            "issue": "Screenshot capture failed",
+            "fix": "Check Playwright installation and URL accessibility",
+            "action": "Verify URL is accessible and Playwright is installed: pip install playwright && playwright install"
+        },
+        r"docker.*build.*failed|build.*error": {
+            "issue": "Docker build failed",
+            "fix": "Check Dockerfile syntax and dependencies",
+            "action": "Review Dockerfile, check base image, and verify all dependencies are available"
+        },
+        r"container.*exited|container.*stopped": {
+            "issue": "Container exited unexpectedly",
+            "fix": "Check container logs for errors",
+            "action": "Run: docker logs <container_name> to see error details"
+        },
+        r"database.*connection.*failed|database.*error": {
+            "issue": "Database connection failed",
+            "fix": "Check database service is running and credentials are correct",
+            "action": "Verify database container is running and environment variables are set correctly"
         }
     }
     

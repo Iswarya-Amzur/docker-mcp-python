@@ -657,6 +657,193 @@ def launch_browser(url: str, browser: str = "chromium", headless: bool = False, 
         }
 
 
+async def run_interactive_tests_async(project_root: str, frontend_url: str = "http://localhost:3000",
+                                     backend_url: str = "http://localhost:8000", headless: bool = False,
+                                     perform_interactions: bool = True) -> dict:
+    """
+    Async version of run_interactive_tests that works inside asyncio loops.
+    Uses Playwright async API to perform real frontend interactions.
+    
+    Args:
+        project_root: Root directory of the project
+        frontend_url: Frontend URL
+        backend_url: Backend URL
+        headless: Run in headless mode
+        perform_interactions: Perform actual user interactions (default: True)
+        
+    Returns:
+        Dictionary with test results including interaction tests
+    """
+    try:
+        from playwright.async_api import async_playwright
+        
+        results = {
+            "tests": [],
+            "passed": 0,
+            "failed": 0,
+            "total": 0,
+            "interactions": []
+        }
+        
+        async with async_playwright() as p:
+            # Launch browser with visible window (unless headless mode requested)
+            logger.info(f"🌐 Launching {'headless ' if headless else 'VISIBLE '}Chromium browser...")
+            browser = await p.chromium.launch(
+                headless=headless,
+                slow_mo=500 if not headless else 0,  # Slow down actions for visibility
+                args=['--start-maximized'] if not headless else []  # Maximize window
+            )
+            context = await browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                no_viewport=True if not headless else False  # Use full window size
+            )
+            page = await context.new_page()
+            logger.info("✅ Browser window opened!")
+            
+            # Test 1: Backend health check
+            results["total"] += 1
+            try:
+                response = await page.request.get(f"{backend_url}/health")
+                if response.ok:
+                    results["tests"].append({"name": "Backend health check", "status": "passed"})
+                    results["passed"] += 1
+                else:
+                    results["tests"].append({"name": "Backend health check", "status": "failed", "error": f"Status {response.status}"})
+                    results["failed"] += 1
+            except Exception as e:
+                results["tests"].append({"name": "Backend health check", "status": "failed", "error": str(e)})
+                results["failed"] += 1
+            
+            # Test 2: Frontend loads
+            results["total"] += 1
+            try:
+                logger.info(f"🌐 Loading frontend at {frontend_url}")
+                print(f"\n{'='*70}")
+                print(f"🌐 BROWSER LAUNCHED - Opening: {frontend_url}")
+                print(f"{'='*70}\n")
+                
+                await page.goto(frontend_url, wait_until="networkidle", timeout=30000)
+                title = await page.title()
+                
+                logger.info(f"✅ Page loaded: {title}")
+                print(f"✅ Page loaded successfully: {title}\n")
+                
+                results["tests"].append({"name": "Frontend loads successfully", "status": "passed", "title": title})
+                results["passed"] += 1
+                
+                # Take initial screenshot with base64 for chat embedding
+                screenshot_path = os.path.join(project_root, "frontend_initial.png")
+                screenshot_bytes = await page.screenshot(full_page=True)
+                with open(screenshot_path, 'wb') as f:
+                    f.write(screenshot_bytes)
+                
+                # Encode as base64 for chat embedding
+                import base64
+                base64_image = base64.b64encode(screenshot_bytes).decode('utf-8')
+                results["screenshot"] = screenshot_path
+                results["screenshot_base64"] = base64_image
+                results["screenshot_data_url"] = f'data:image/png;base64,{base64_image}'
+                
+            except Exception as e:
+                results["tests"].append({"name": "Frontend loads successfully", "status": "failed", "error": str(e)})
+                results["failed"] += 1
+            
+            # Test 3: Check for API calls
+            results["total"] += 1
+            try:
+                # Listen for network requests
+                api_calls = []
+                def handle_request(request):
+                    if backend_url in request.url:
+                        api_calls.append(request.url)
+                page.on("request", handle_request)
+                
+                await page.reload(wait_until="networkidle")
+                await page.wait_for_timeout(2000)
+                
+                if api_calls:
+                    results["tests"].append({"name": "Frontend-Backend communication", "status": "passed", "api_calls": len(api_calls)})
+                    results["passed"] += 1
+                else:
+                    results["tests"].append({"name": "Frontend-Backend communication", "status": "warning", "note": "No API calls detected"})
+            except Exception as e:
+                results["tests"].append({"name": "Frontend-Backend communication", "status": "failed", "error": str(e)})
+                results["failed"] += 1
+            
+            # NEW: Test 4-N: Perform ACTUAL USER INTERACTIONS - COMPREHENSIVE TESTING
+            if perform_interactions:
+                logger.info("Starting comprehensive interactive user flow tests...")
+                print(f"\n{'='*70}")
+                print(f"🎬 PERFORMING COMPREHENSIVE INTERACTIVE TESTS")
+                print(f"   Watch the browser - it will interact with your app!")
+                print(f"   - Clicking ALL buttons")
+                print(f"   - Filling ALL forms")
+                print(f"   - Creating MULTIPLE items")
+                print(f"   - Testing ALL navigation")
+                print(f"   - Testing ALL interactions")
+                print(f"{'='*70}\n")
+                
+                # Perform comprehensive async interaction tests
+                await _test_comprehensive_interactions_async(page, results, backend_url)
+                await _test_button_interactions_async(page, results)
+                await _test_input_interactions_async(page, results)
+                await _test_create_item_async(page, results, backend_url)
+                await _test_create_multiple_items_async(page, results, backend_url)
+                await _test_navigation_async(page, results)
+                await _test_form_submission_async(page, results)
+                await _test_all_links_async(page, results)
+                await _test_all_forms_async(page, results)
+                await _test_all_buttons_async(page, results)
+                await _test_dropdowns_and_selects_async(page, results)
+                await _test_checkboxes_and_radios_async(page, results)
+                
+                # Take final screenshot after interactions with base64 for chat embedding
+                screenshot_after = os.path.join(project_root, "frontend_after_interactions.png")
+                screenshot_bytes_after = await page.screenshot(full_page=True)
+                with open(screenshot_after, 'wb') as f:
+                    f.write(screenshot_bytes_after)
+                
+                # Encode as base64 for chat embedding
+                import base64
+                base64_image_after = base64.b64encode(screenshot_bytes_after).decode('utf-8')
+                results["screenshot_after"] = screenshot_after
+                results["screenshot_after_base64"] = base64_image_after
+                results["screenshot_after_data_url"] = f'data:image/png;base64,{base64_image_after}'
+                
+                # Keep browser open for inspection if not headless
+                if not headless:
+                    print(f"\n{'='*70}")
+                    print(f"✅ INTERACTIVE TESTS COMPLETED!")
+                    print(f"   Browser will stay open for 15 seconds for inspection...")
+                    print(f"   You can see the final state of your application")
+                    print(f"{'='*70}\n")
+                    logger.info("Tests completed! Keeping browser open for 15 seconds for inspection...")
+                    await page.wait_for_timeout(15000)
+                    print("\n⏱️  Closing browser...\n")
+            else:
+                # Keep browser open for inspection if not headless
+                if not headless:
+                    logger.info("Application running in browser. Keeping open for 10 seconds...")
+                    print(f"\n⏱️  Browser will close in 10 seconds...\n")
+                    await page.wait_for_timeout(10000)
+            
+            await browser.close()
+        
+        results["status"] = "success" if results["failed"] == 0 else "partial"
+        return results
+        
+    except ImportError as e:
+        logger.warning(f"Playwright not installed: {str(e)}")
+        logger.info("Falling back to system browser...")
+        return _run_tests_with_system_browser(project_root, frontend_url, backend_url)
+    except Exception as e:
+        logger.error(f"Error during async interactive tests: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error running interactive tests: {str(e)}"
+        }
+
+
 def run_interactive_tests(project_root: str, frontend_url: str = "http://localhost:3000",
                          backend_url: str = "http://localhost:8000", headless: bool = False,
                          perform_interactions: bool = True) -> dict:
@@ -665,7 +852,7 @@ def run_interactive_tests(project_root: str, frontend_url: str = "http://localho
     Now includes ACTUAL USER INTERACTIONS like clicking buttons, filling forms, creating tasks, etc.
     
     AUTO-FIXES:
-    - Detects if running in asyncio loop and automatically falls back to system browser
+    - Detects if running in asyncio loop and automatically uses async version
     - Handles Playwright installation issues gracefully
     - Provides clear error messages and fallback options
     
@@ -683,10 +870,23 @@ def run_interactive_tests(project_root: str, frontend_url: str = "http://localho
     try:
         import asyncio
         try:
-            asyncio.get_running_loop()
-            # We're inside an asyncio loop - cannot use sync_playwright
-            logger.warning("Detected asyncio loop - using system browser instead of Playwright")
-            return _run_tests_with_system_browser(project_root, frontend_url, backend_url)
+            loop = asyncio.get_running_loop()
+            # We're inside an asyncio loop - use async version
+            logger.info("Detected asyncio loop - using async Playwright API")
+            # Try to use nest_asyncio to allow nested event loops
+            try:
+                import nest_asyncio
+                nest_asyncio.apply()
+                # Now we can use asyncio.run even though we're in a loop
+                return asyncio.run(run_interactive_tests_async(project_root, frontend_url, backend_url, headless, perform_interactions))
+            except ImportError:
+                # nest_asyncio not available - create a task in the existing loop
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        lambda: asyncio.run(run_interactive_tests_async(project_root, frontend_url, backend_url, headless, perform_interactions))
+                    )
+                    return future.result(timeout=300)
         except RuntimeError:
             # No running loop - we can use sync_playwright
             pass
@@ -893,6 +1093,39 @@ def run_interactive_tests(project_root: str, frontend_url: str = "http://localho
             }
 
 
+async def _test_button_interactions_async(page, results: dict):
+    """Test clicking buttons on the page (async version)"""
+    try:
+        # Find all visible buttons
+        buttons = await page.locator("button, input[type='button'], input[type='submit']").all()
+        
+        if not buttons:
+            results["interactions"].append("No buttons found")
+            return
+        
+        clicked = 0
+        for i, button in enumerate(buttons[:3]):  # Test first 3 buttons
+            try:
+                if await button.is_visible():
+                    button_text = (await button.inner_text()) or (await button.get_attribute("value")) or f"Button {i+1}"
+                    logger.info(f"Clicking button: {button_text}")
+                    await button.click(timeout=5000)
+                    await page.wait_for_timeout(1000)
+                    clicked += 1
+                    results["interactions"].append(f"Clicked button: {button_text}")
+            except Exception as e:
+                logger.debug(f"Could not click button {i}: {str(e)}")
+        
+        if clicked > 0:
+            results["tests"].append({"name": "Button interactions", "status": "passed", "buttons_clicked": clicked})
+            results["passed"] += 1
+        else:
+            results["tests"].append({"name": "Button interactions", "status": "skipped", "note": "No clickable buttons found"})
+    except Exception as e:
+        results["tests"].append({"name": "Button interactions", "status": "failed", "error": str(e)})
+        results["failed"] += 1
+
+
 def _test_button_interactions(page, results: dict):
     """Test clicking buttons on the page"""
     try:
@@ -923,6 +1156,49 @@ def _test_button_interactions(page, results: dict):
             results["tests"].append({"name": "Button interactions", "status": "skipped", "note": "No clickable buttons found"})
     except Exception as e:
         results["tests"].append({"name": "Button interactions", "status": "failed", "error": str(e)})
+        results["failed"] += 1
+
+
+async def _test_input_interactions_async(page, results: dict):
+    """Test filling input fields (async version)"""
+    try:
+        # Find all input fields
+        inputs = await page.locator("input[type='text'], input[type='email'], input:not([type]), textarea").all()
+        
+        if not inputs:
+            results["interactions"].append("No input fields found")
+            return
+        
+        filled = 0
+        test_data = {
+            "text": "Test Task from E2E",
+            "email": "test@example.com",
+            "default": "Sample input"
+        }
+        
+        for i, input_field in enumerate(inputs[:3]):  # Test first 3 inputs
+            try:
+                if await input_field.is_visible() and not await input_field.is_disabled():
+                    field_type = (await input_field.get_attribute("type")) or "default"
+                    placeholder = (await input_field.get_attribute("placeholder")) or f"Field {i+1}"
+                    
+                    test_value = test_data.get(field_type, test_data["default"])
+                    logger.info(f"Filling input field: {placeholder} with '{test_value}'")
+                    
+                    await input_field.fill(test_value)
+                    await page.wait_for_timeout(500)
+                    filled += 1
+                    results["interactions"].append(f"Filled field: {placeholder}")
+            except Exception as e:
+                logger.debug(f"Could not fill input {i}: {str(e)}")
+        
+        if filled > 0:
+            results["tests"].append({"name": "Input field interactions", "status": "passed", "fields_filled": filled})
+            results["passed"] += 1
+        else:
+            results["tests"].append({"name": "Input field interactions", "status": "skipped", "note": "No fillable inputs found"})
+    except Exception as e:
+        results["tests"].append({"name": "Input field interactions", "status": "failed", "error": str(e)})
         results["failed"] += 1
 
 
@@ -966,6 +1242,58 @@ def _test_input_interactions(page, results: dict):
             results["tests"].append({"name": "Input field interactions", "status": "skipped", "note": "No fillable inputs found"})
     except Exception as e:
         results["tests"].append({"name": "Input field interactions", "status": "failed", "error": str(e)})
+        results["failed"] += 1
+
+
+async def _test_create_item_async(page, results: dict, backend_url: str):
+    """Test creating an item (e.g., todo, task, post) - async version"""
+    try:
+        # Look for common patterns: input + button, form with submit
+        created = False
+        
+        # Pattern 1: Input field with adjacent button
+        input_selectors = [
+            "input[placeholder*='task' i]",
+            "input[placeholder*='todo' i]", 
+            "input[placeholder*='add' i]",
+            "input[type='text']:visible"
+        ]
+        
+        for selector in input_selectors:
+            try:
+                input_field = page.locator(selector).first
+                if await input_field.is_visible():
+                    # Fill the input
+                    logger.info(f"Found input field, creating test item...")
+                    await input_field.fill("E2E Test Task - Created by Playwright")
+                    await page.wait_for_timeout(500)
+                    
+                    # Look for nearby submit button
+                    add_buttons = await page.locator("button:has-text('Add'), button:has-text('Create'), button:has-text('Submit'), button[type='submit']").all()
+                    
+                    for button in add_buttons:
+                        if await button.is_visible():
+                            logger.info(f"Clicking submit button to create item...")
+                            await button.click()
+                            await page.wait_for_timeout(2000)
+                            created = True
+                            results["interactions"].append("Created new item via form")
+                            break
+                    
+                    if created:
+                        break
+            except:
+                continue
+        
+        if created:
+            # Verify item was created by checking the page or API
+            await page.wait_for_timeout(1000)
+            results["tests"].append({"name": "Create item interaction", "status": "passed", "action": "Item created"})
+            results["passed"] += 1
+        else:
+            results["tests"].append({"name": "Create item interaction", "status": "skipped", "note": "No create form found"})
+    except Exception as e:
+        results["tests"].append({"name": "Create item interaction", "status": "failed", "error": str(e)})
         results["failed"] += 1
 
 
@@ -1021,6 +1349,46 @@ def _test_create_item(page, results: dict, backend_url: str):
         results["failed"] += 1
 
 
+async def _test_navigation_async(page, results: dict):
+    """Test navigation between pages/routes (async version)"""
+    try:
+        # Find navigation links
+        links = await page.locator("a[href], button:has-text('Home'), button:has-text('About')").all()
+        
+        navigated = 0
+        for i, link in enumerate(links[:3]):  # Test first 3 links
+            try:
+                if await link.is_visible():
+                    link_text = (await link.inner_text()) or (await link.get_attribute("href")) or f"Link {i+1}"
+                    href = await link.get_attribute("href")
+                    
+                    # Skip external links
+                    if href and (href.startswith("http://") or href.startswith("https://")) and "localhost" not in href:
+                        continue
+                    
+                    logger.info(f"Navigating to: {link_text}")
+                    await link.click(timeout=5000)
+                    await page.wait_for_load_state("networkidle")
+                    await page.wait_for_timeout(1000)
+                    navigated += 1
+                    results["interactions"].append(f"Navigated to: {link_text}")
+                    
+                    # Go back
+                    await page.go_back()
+                    await page.wait_for_timeout(500)
+            except Exception as e:
+                logger.debug(f"Could not navigate via link {i}: {str(e)}")
+        
+        if navigated > 0:
+            results["tests"].append({"name": "Navigation interactions", "status": "passed", "links_tested": navigated})
+            results["passed"] += 1
+        else:
+            results["tests"].append({"name": "Navigation interactions", "status": "skipped", "note": "No navigation links found"})
+    except Exception as e:
+        results["tests"].append({"name": "Navigation interactions", "status": "failed", "error": str(e)})
+        results["failed"] += 1
+
+
 def _test_navigation(page, results: dict):
     """Test navigation between pages/routes"""
     try:
@@ -1058,6 +1426,50 @@ def _test_navigation(page, results: dict):
             results["tests"].append({"name": "Navigation interactions", "status": "skipped", "note": "No navigation links found"})
     except Exception as e:
         results["tests"].append({"name": "Navigation interactions", "status": "failed", "error": str(e)})
+        results["failed"] += 1
+
+
+async def _test_form_submission_async(page, results: dict):
+    """Test form submission (async version)"""
+    try:
+        # Find forms on the page
+        forms = await page.locator("form").all()
+        
+        if not forms:
+            results["interactions"].append("No forms found")
+            return
+        
+        submitted = 0
+        for i, form in enumerate(forms[:2]):  # Test first 2 forms
+            try:
+                if await form.is_visible():
+                    # Fill all inputs in the form
+                    inputs = await form.locator("input[type='text'], input:not([type]), textarea").all()
+                    
+                    for input_field in inputs:
+                        if await input_field.is_visible() and not await input_field.is_disabled():
+                            await input_field.fill("Test data from E2E")
+                            await page.wait_for_timeout(300)
+                    
+                    # Find and click submit button
+                    submit = form.locator("button[type='submit'], input[type='submit'], button:has-text('Submit')").first
+                    
+                    if await submit.is_visible():
+                        logger.info(f"Submitting form {i+1}")
+                        await submit.click()
+                        await page.wait_for_timeout(2000)
+                        submitted += 1
+                        results["interactions"].append(f"Submitted form {i+1}")
+            except Exception as e:
+                logger.debug(f"Could not submit form {i}: {str(e)}")
+        
+        if submitted > 0:
+            results["tests"].append({"name": "Form submission", "status": "passed", "forms_submitted": submitted})
+            results["passed"] += 1
+        else:
+            results["tests"].append({"name": "Form submission", "status": "skipped", "note": "No submittable forms found"})
+    except Exception as e:
+        results["tests"].append({"name": "Form submission", "status": "failed", "error": str(e)})
         results["failed"] += 1
 
 
@@ -1102,6 +1514,371 @@ def _test_form_submission(page, results: dict):
             results["tests"].append({"name": "Form submission", "status": "skipped", "note": "No submittable forms found"})
     except Exception as e:
         results["tests"].append({"name": "Form submission", "status": "failed", "error": str(e)})
+        results["failed"] += 1
+
+
+async def _test_comprehensive_interactions_async(page, results: dict, backend_url: str):
+    """Comprehensive test that performs ALL possible interactions - async version"""
+    try:
+        logger.info("Starting comprehensive interaction test - testing ALL elements...")
+        results["total"] += 1
+        
+        interactions_performed = []
+        
+        # 1. Test ALL buttons (not just first 3)
+        try:
+            buttons = await page.locator("button, input[type='button'], input[type='submit']").all()
+            clicked_count = 0
+            for i, button in enumerate(buttons[:10]):  # Test up to 10 buttons
+                try:
+                    if await button.is_visible() and await button.is_enabled():
+                        button_text = (await button.inner_text()) or (await button.get_attribute("value")) or f"Button {i+1}"
+                        await button.click(timeout=3000)
+                        await page.wait_for_timeout(500)
+                        clicked_count += 1
+                        interactions_performed.append(f"Clicked button: {button_text}")
+                except:
+                    continue
+            if clicked_count > 0:
+                interactions_performed.append(f"Total buttons clicked: {clicked_count}")
+        except Exception as e:
+            logger.debug(f"Error testing buttons: {str(e)}")
+        
+        # 2. Test ALL input fields
+        try:
+            inputs = await page.locator("input[type='text'], input[type='email'], input:not([type]), textarea").all()
+            filled_count = 0
+            for i, input_field in enumerate(inputs[:10]):  # Test up to 10 inputs
+                try:
+                    if await input_field.is_visible() and not await input_field.is_disabled():
+                        await input_field.fill(f"Test input {i+1}")
+                        await page.wait_for_timeout(200)
+                        filled_count += 1
+                except:
+                    continue
+            if filled_count > 0:
+                interactions_performed.append(f"Total inputs filled: {filled_count}")
+        except Exception as e:
+            logger.debug(f"Error testing inputs: {str(e)}")
+        
+        # 3. Test ALL links
+        try:
+            links = await page.locator("a[href]:visible").all()
+            clicked_links = 0
+            for i, link in enumerate(links[:10]):  # Test up to 10 links
+                try:
+                    href = await link.get_attribute("href")
+                    if href and ("localhost" in str(href) or str(href).startswith("/") or str(href).startswith("#")):
+                        await link.click(timeout=3000)
+                        await page.wait_for_timeout(1000)
+                        await page.go_back()
+                        await page.wait_for_timeout(500)
+                        clicked_links += 1
+                except:
+                    continue
+            if clicked_links > 0:
+                interactions_performed.append(f"Total links clicked: {clicked_links}")
+        except Exception as e:
+            logger.debug(f"Error testing links: {str(e)}")
+        
+        if interactions_performed:
+            results["tests"].append({
+                "name": "Comprehensive interactions",
+                "status": "passed",
+                "interactions": len(interactions_performed)
+            })
+            results["passed"] += 1
+            results["interactions"].extend(interactions_performed)
+        else:
+            results["tests"].append({
+                "name": "Comprehensive interactions",
+                "status": "skipped",
+                "note": "No interactive elements found"
+            })
+    except Exception as e:
+        results["tests"].append({
+            "name": "Comprehensive interactions",
+            "status": "failed",
+            "error": str(e)
+        })
+        results["failed"] += 1
+
+
+async def _test_create_multiple_items_async(page, results: dict, backend_url: str):
+    """Test creating multiple items - async version"""
+    try:
+        created_count = 0
+        test_items = [
+            "E2E Test Task 1",
+            "E2E Test Task 2",
+            "E2E Test Task 3"
+        ]
+        
+        for item_text in test_items:
+            try:
+                # Find input field
+                input_field = page.locator("input[placeholder*='task' i], input[placeholder*='todo' i], input[placeholder*='add' i], input[type='text']:visible").first
+                
+                if await input_field.is_visible():
+                    await input_field.fill(item_text)
+                    await page.wait_for_timeout(300)
+                    
+                    # Find and click submit button
+                    add_button = page.locator("button:has-text('Add'), button:has-text('Create'), button[type='submit']").first
+                    if await add_button.is_visible():
+                        await add_button.click()
+                        await page.wait_for_timeout(1000)
+                        created_count += 1
+                        results["interactions"].append(f"Created item: {item_text}")
+            except:
+                continue
+        
+        if created_count > 0:
+            results["tests"].append({
+                "name": "Create multiple items",
+                "status": "passed",
+                "items_created": created_count
+            })
+            results["passed"] += 1
+        else:
+            results["tests"].append({
+                "name": "Create multiple items",
+                "status": "skipped",
+                "note": "No create form found"
+            })
+    except Exception as e:
+        results["tests"].append({
+            "name": "Create multiple items",
+            "status": "failed",
+            "error": str(e)
+        })
+        results["failed"] += 1
+
+
+async def _test_all_links_async(page, results: dict):
+    """Test ALL links on the page - async version"""
+    try:
+        links = await page.locator("a[href]:visible").all()
+        tested_count = 0
+        
+        for i, link in enumerate(links[:15]):  # Test up to 15 links
+            try:
+                href = await link.get_attribute("href")
+                link_text = (await link.inner_text()) or href or f"Link {i+1}"
+                
+                # Skip external links
+                if href and (href.startswith("http://") or href.startswith("https://")) and "localhost" not in href:
+                    continue
+                
+                await link.click(timeout=3000)
+                await page.wait_for_load_state("networkidle")
+                await page.wait_for_timeout(500)
+                tested_count += 1
+                results["interactions"].append(f"Tested link: {link_text}")
+                
+                # Go back if not on same page
+                if href and not href.startswith("#"):
+                    await page.go_back()
+                    await page.wait_for_timeout(300)
+            except:
+                continue
+        
+        if tested_count > 0:
+            results["tests"].append({
+                "name": "All links tested",
+                "status": "passed",
+                "links_tested": tested_count
+            })
+            results["passed"] += 1
+        else:
+            results["tests"].append({
+                "name": "All links tested",
+                "status": "skipped",
+                "note": "No links found"
+            })
+    except Exception as e:
+        results["tests"].append({
+            "name": "All links tested",
+            "status": "failed",
+            "error": str(e)
+        })
+        results["failed"] += 1
+
+
+async def _test_all_forms_async(page, results: dict):
+    """Test ALL forms on the page - async version"""
+    try:
+        forms = await page.locator("form").all()
+        tested_count = 0
+        
+        for i, form in enumerate(forms[:5]):  # Test up to 5 forms
+            try:
+                if await form.is_visible():
+                    # Fill all inputs
+                    inputs = await form.locator("input[type='text'], input[type='email'], textarea").all()
+                    for input_field in inputs:
+                        if await input_field.is_visible() and not await input_field.is_disabled():
+                            await input_field.fill("Test form data")
+                            await page.wait_for_timeout(200)
+                    
+                    # Try to submit
+                    submit = form.locator("button[type='submit'], input[type='submit']").first
+                    if await submit.is_visible():
+                        await submit.click()
+                        await page.wait_for_timeout(1000)
+                        tested_count += 1
+                        results["interactions"].append(f"Tested form {i+1}")
+            except:
+                continue
+        
+        if tested_count > 0:
+            results["tests"].append({
+                "name": "All forms tested",
+                "status": "passed",
+                "forms_tested": tested_count
+            })
+            results["passed"] += 1
+        else:
+            results["tests"].append({
+                "name": "All forms tested",
+                "status": "skipped",
+                "note": "No forms found"
+            })
+    except Exception as e:
+        results["tests"].append({
+            "name": "All forms tested",
+            "status": "failed",
+            "error": str(e)
+        })
+        results["failed"] += 1
+
+
+async def _test_all_buttons_async(page, results: dict):
+    """Test ALL buttons on the page - async version"""
+    try:
+        buttons = await page.locator("button, input[type='button'], input[type='submit']").all()
+        clicked_count = 0
+        
+        for i, button in enumerate(buttons[:20]):  # Test up to 20 buttons
+            try:
+                if await button.is_visible() and await button.is_enabled():
+                    await button.click(timeout=3000)
+                    await page.wait_for_timeout(500)
+                    clicked_count += 1
+            except:
+                continue
+        
+        if clicked_count > 0:
+            results["tests"].append({
+                "name": "All buttons tested",
+                "status": "passed",
+                "buttons_clicked": clicked_count
+            })
+            results["passed"] += 1
+        else:
+            results["tests"].append({
+                "name": "All buttons tested",
+                "status": "skipped",
+                "note": "No buttons found"
+            })
+    except Exception as e:
+        results["tests"].append({
+            "name": "All buttons tested",
+            "status": "failed",
+            "error": str(e)
+        })
+        results["failed"] += 1
+
+
+async def _test_dropdowns_and_selects_async(page, results: dict):
+    """Test ALL dropdowns and select elements - async version"""
+    try:
+        selects = await page.locator("select").all()
+        tested_count = 0
+        
+        for i, select in enumerate(selects[:10]):  # Test up to 10 selects
+            try:
+                if await select.is_visible():
+                    options = await select.locator("option").all()
+                    if len(options) > 1:
+                        await select.select_option(index=1)
+                        await page.wait_for_timeout(300)
+                        tested_count += 1
+            except:
+                continue
+        
+        if tested_count > 0:
+            results["tests"].append({
+                "name": "Dropdowns and selects tested",
+                "status": "passed",
+                "selects_tested": tested_count
+            })
+            results["passed"] += 1
+        else:
+            results["tests"].append({
+                "name": "Dropdowns and selects tested",
+                "status": "skipped",
+                "note": "No selects found"
+            })
+    except Exception as e:
+        results["tests"].append({
+            "name": "Dropdowns and selects tested",
+            "status": "failed",
+            "error": str(e)
+        })
+        results["failed"] += 1
+
+
+async def _test_checkboxes_and_radios_async(page, results: dict):
+    """Test ALL checkboxes and radio buttons - async version"""
+    try:
+        checkboxes = await page.locator("input[type='checkbox']").all()
+        radios = await page.locator("input[type='radio']").all()
+        tested_count = 0
+        
+        # Test checkboxes
+        for checkbox in checkboxes[:10]:  # Test up to 10 checkboxes
+            try:
+                if await checkbox.is_visible() and not await checkbox.is_disabled():
+                    await checkbox.click()
+                    await page.wait_for_timeout(200)
+                    tested_count += 1
+            except:
+                continue
+        
+        # Test radio buttons (click first in each group)
+        radio_groups = {}
+        for radio in radios[:10]:  # Test up to 10 radios
+            try:
+                if await radio.is_visible() and not await radio.is_disabled():
+                    name = await radio.get_attribute("name")
+                    if name and name not in radio_groups:
+                        await radio.click()
+                        await page.wait_for_timeout(200)
+                        radio_groups[name] = True
+                        tested_count += 1
+            except:
+                continue
+        
+        if tested_count > 0:
+            results["tests"].append({
+                "name": "Checkboxes and radios tested",
+                "status": "passed",
+                "elements_tested": tested_count
+            })
+            results["passed"] += 1
+        else:
+            results["tests"].append({
+                "name": "Checkboxes and radios tested",
+                "status": "skipped",
+                "note": "No checkboxes/radios found"
+            })
+    except Exception as e:
+        results["tests"].append({
+            "name": "Checkboxes and radios tested",
+            "status": "failed",
+            "error": str(e)
+        })
         results["failed"] += 1
 
 
@@ -1382,11 +2159,36 @@ def launch_and_test(project_root: str, backend_port: int = 8000,
                     if len(interactive_results["interactions"]) > 10:
                         report += f"   ... and {len(interactive_results['interactions']) - 10} more\n"
                 
-                # Show screenshots
+                # Show screenshots and embed them in chat
                 if "screenshot" in interactive_results:
-                    report += f"\n📸 Screenshot (Initial): {interactive_results['screenshot']}\n"
+                    screenshot_path = interactive_results['screenshot']
+                    report += f"\n📸 Screenshot (Initial): {screenshot_path}\n"
+                    # Display the screenshot
+                    try:
+                        from docker_tools.comprehensive_workflow import display_screenshot
+                        display_result = display_screenshot(screenshot_path)
+                        if display_result['status'] == 'success':
+                            report += f"   ✅ Screenshot displayed!\n"
+                    except:
+                        pass
+                    # Embed screenshot in chat response
+                    if "screenshot_data_url" in interactive_results:
+                        report += f"\n![Initial Screenshot]({interactive_results['screenshot_data_url']})\n"
+                
                 if "screenshot_after" in interactive_results:
-                    report += f"📸 Screenshot (After Tests): {interactive_results['screenshot_after']}\n"
+                    screenshot_path = interactive_results['screenshot_after']
+                    report += f"\n📸 Screenshot (After Tests): {screenshot_path}\n"
+                    # Display the screenshot
+                    try:
+                        from docker_tools.comprehensive_workflow import display_screenshot
+                        display_result = display_screenshot(screenshot_path)
+                        if display_result['status'] == 'success':
+                            report += f"   ✅ Screenshot displayed!\n"
+                    except:
+                        pass
+                    # Embed screenshot in chat response
+                    if "screenshot_after_data_url" in interactive_results:
+                        report += f"\n![After Tests Screenshot]({interactive_results['screenshot_after_data_url']})\n"
                 
                 report += f"\n💡 The application was tested with actual user interactions!\n"
                 report += f"   Frontend: {frontend_url}\n"

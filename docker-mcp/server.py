@@ -10,12 +10,11 @@ from docker_tools.docker_builder import build_docker_image
 from docker_tools.test_runner import run_tests_in_container
 from docker_tools.error_fixer import fix_containerization_errors
 from docker_tools.multi_service_handler import dockerize_full_project, detect_services
-from docker_tools.e2e_tester import (
-    launch_and_test, 
-    generate_playwright_test_template,
-    start_docker_compose,
-    stop_docker_compose,
-    run_playwright_tests
+from docker_tools.e2e_tester_async import (
+    launch_and_test_async,
+    check_containers_running_async,
+    start_docker_compose_async,
+    wait_for_services_async
 )
 from docker_tools.logging_monitor import (
     setup_complete_monitoring,
@@ -27,6 +26,18 @@ from docker_tools.logging_monitor import (
     diagnose_monitoring_stack,
     smart_dockerize_and_show_logs
 )
+from docker_tools.comprehensive_workflow_async import (
+    comprehensive_dockerize_and_test_async,
+    detect_database_services,
+    validate_dockerfile
+)
+# Import sync functions still used by some tools
+from docker_tools.comprehensive_workflow import (
+    capture_screenshot,
+    analyze_screenshot,
+    display_screenshot,
+    view_application_logs
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +47,80 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP("Amzur Docker MCP", version="2.0.0")
 
 # ============================================================================
-# CORE TOOLS (7 Essential Tools)
+# COMPREHENSIVE WORKFLOW TOOL (MAIN ORCHESTRATOR)
+# ============================================================================
+
+# Tool 0: Comprehensive Dockerize and Test (ULTIMATE TOOL - ASYNC)
+@mcp.tool()
+async def dockerize_and_test(
+    project_root: str,
+    test_e2e: Optional[bool] = True,
+    monitor_logs: Optional[bool] = False,
+    auto_fix_errors: Optional[bool] = True
+) -> dict:
+    """
+    🎯 ULTIMATE COMPREHENSIVE TOOL - Complete Async Workflow Orchestrator
+    
+    This is the PERFECT tool for prompts like "dockerize this application and test it".
+    It handles EVERYTHING automatically using ASYNC Playwright:
+    
+    1. ✅ Analyzes codebase and detects ALL services (including databases)
+    2. ✅ Creates/validates Docker files (checks if they exist, validates them)
+    3. ✅ Builds containers and launches application in browser
+    4. ✅ Performs REAL browser interactions (clicks, forms, navigation)
+    5. ✅ Captures screenshots as BASE64 (displays in chat!)
+    6. ✅ Tests application end-to-end with actual user actions
+    7. ✅ Sets up Grafana monitoring (if requested)
+    8. ✅ Automatically fixes any errors encountered
+    
+    Perfect for:
+    - "dockerize this application and test it"
+    - "dockerize and show me the logs in grafana"
+    - "dockerize, test, and monitor this app"
+    - Complete end-to-end workflow automation
+    
+    Args:
+        project_root: Root directory of your project
+        test_e2e: Run end-to-end tests with browser interactions (default: True)
+        monitor_logs: Set up Grafana monitoring (default: False)
+        auto_fix_errors: Automatically fix errors encountered (default: True)
+    
+    Returns:
+        Dict with:
+        - report: Formatted text report
+        - screenshots: Dict with base64-encoded screenshots
+        - services: Detected services
+        - databases: Detected databases
+        - tests: Test results
+        
+    Example:
+        dockerize_and_test(project_root="C:\\MyApp", test_e2e=True)
+        
+        Result: Complete workflow with REAL browser interactions and BASE64 screenshots!
+    """
+    try:
+        logger.info(f"Running ASYNC comprehensive workflow for {project_root}")
+        result = await comprehensive_dockerize_and_test_async(
+            project_root,
+            test_e2e=test_e2e if test_e2e is not None else True,
+            monitor_logs=monitor_logs if monitor_logs is not None else False,
+            auto_fix_errors=auto_fix_errors if auto_fix_errors is not None else True
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error in comprehensive workflow: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "report": f"Error in comprehensive workflow: {str(e)}",
+            "screenshots": {},
+            "services": {},
+            "databases": {},
+            "tests": []
+        }
+
+
+# ============================================================================
+# CORE TOOLS (7 Essential Tools + Enhanced)
 # ============================================================================
 
 # Tool 1: Dockerize Complete Project (MAIN TOOL)
@@ -89,22 +173,22 @@ def dockerize_project(project_root: str) -> str:
 
 # Tool 2: Test Application End-to-End (MAIN TESTING TOOL)
 @mcp.tool()
-def test_application_e2e(
+async def test_application_e2e(
     project_root: str,
     backend_port: Optional[int] = None,
     frontend_port: Optional[int] = None,
     cleanup: Optional[bool] = None,
     headless: Optional[bool] = None
-) -> str:
+) -> dict:
     """
-    🎯 PRIMARY TESTING TOOL
+    🎯 PRIMARY TESTING TOOL - ASYNC with REAL Browser Interactions
     
-    Complete end-to-end testing with REAL browser interactions.
+    Complete end-to-end testing with ACTUAL user interactions using Playwright Async API.
     
     What it does:
     - Checks if containers are running (starts them if needed)
     - Waits for services to be ready
-    - Launches VISIBLE browser window (Chromium)
+    - Launches VISIBLE browser window (Chromium) with Playwright Async API
     - Loads your application
     - Performs REAL user interactions:
       * Clicks buttons
@@ -112,7 +196,7 @@ def test_application_e2e(
       * Creates items
       * Navigates pages
       * Submits forms
-    - Takes before/after screenshots
+    - Captures screenshots as BASE64 (displays in chat!)
     - Validates frontend-backend communication
     - Generates detailed test report
     - Keeps browser open 15 seconds for inspection
@@ -131,31 +215,37 @@ def test_application_e2e(
         headless: Run browser in headless mode (default: False - shows browser)
     
     Returns:
-        Detailed test report with:
-        - Test results (passed/failed)
-        - All interactions performed
-        - Screenshots (before/after)
-        - Service URLs
+        Dict with:
+        - steps: List of workflow steps
+        - tests: Test results
+        - screenshots: Base64-encoded screenshots
+        - test_summary: Passed/failed counts
         
     Example:
         test_application_e2e(project_root="C:\\MyApp")
         
-        Result: Browser opens, performs interactions, shows detailed report!
+        Result: Browser opens, performs REAL interactions, returns BASE64 screenshots!
     """
     try:
-        logger.info(f"Launching and testing application at {project_root}")
-        result = launch_and_test(
+        logger.info(f"Launching and testing application at {project_root} (ASYNC)")
+        result = await launch_and_test_async(
             project_root,
             backend_port or 8000,
             frontend_port or 3000,
             cleanup if cleanup is not None else False,
             headless if headless is not None else False,
-            show_browser=True,  # Always show browser
-            use_system_browser=False  # Use Playwright for interactions
+            show_browser=True
         )
         return result
     except Exception as e:
-        return f"Error running E2E tests: {str(e)}"
+        logger.error(f"Error running E2E tests: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": f"Error running E2E tests: {str(e)}",
+            "steps": [],
+            "tests": [],
+            "screenshots": {}
+        }
 
 
 # Tool 3: Show Application Logs in Grafana (MAIN MONITORING TOOL)
@@ -482,15 +572,16 @@ def create_playwright_tests(
         return f"Error generating Playwright tests: {str(e)}"
 
 
-# Tool 7: Detect Project Services (INSPECTION TOOL)
+# Tool 7: Detect Project Services (INSPECTION TOOL - ENHANCED)
 @mcp.tool()
-def detect_project_services(project_root: str) -> str:
+def detect_project_services(project_root: str, include_databases: Optional[bool] = True) -> str:
     """
-    Detect all services in a multi-service project.
+    Detect all services in a multi-service project (ENHANCED with database detection).
     
     What it does:
     - Scans project directory
     - Identifies all services (backend, frontend, API, client, etc.)
+    - Detects database services (PostgreSQL, MySQL, MongoDB, Redis, SQLite)
     - Analyzes each service type
     - Determines technology stack
     - Shows dependencies
@@ -500,36 +591,244 @@ def detect_project_services(project_root: str) -> str:
     - Before dockerization
     - Multi-service projects
     - Microservices architecture
+    - Database service detection
     
     Args:
         project_root: Root directory of your project
+        include_databases: Also detect database services (default: True)
     
     Returns:
-        JSON report with detected services and details
+        JSON report with detected services and database details
         
     Example:
-        detect_project_services(project_root="C:\\MyApp")
+        detect_project_services(project_root="C:\\MyApp", include_databases=True)
         
         Result:
         {
-          "backend": {
-            "path": "C:\\MyApp\\backend",
-            "type": "python",
-            "analysis": { ... }
+          "application_services": {
+            "backend": {
+              "path": "C:\\MyApp\\backend",
+              "type": "python",
+              "analysis": { ... }
+            },
+            "frontend": {
+              "path": "C:\\MyApp\\frontend",
+              "type": "node",
+              "analysis": { ... }
+            }
           },
-          "frontend": {
-            "path": "C:\\MyApp\\frontend",
-            "type": "node",
-            "analysis": { ... }
+          "database_services": {
+            "postgresql_db": {
+              "type": "postgresql",
+              "detected_from": "docker-compose.yml"
+            }
           }
         }
     """
     try:
         logger.info(f"Detecting services in {project_root}")
         services = detect_services(project_root)
-        return json.dumps(services, indent=2)
+        result = {"application_services": services}
+        
+        if include_databases:
+            databases = detect_database_services(project_root)
+            result["database_services"] = databases
+        
+        return json.dumps(result, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e), "status": "failed"})
+
+
+# Tool 8: View Application Logs (NEW)
+@mcp.tool()
+def view_logs(
+    project_root: str,
+    service_name: Optional[str] = None,
+    tail: Optional[int] = None,
+    follow: Optional[bool] = None
+) -> str:
+    """
+    View application logs directly from Docker containers.
+    
+    What it does:
+    - Checks if containers are running
+    - Retrieves logs from specified service or all services
+    - Shows recent log entries (tail)
+    - Can follow logs in real-time (streaming)
+    
+    Perfect for:
+    - Debugging application issues
+    - Monitoring application behavior
+    - Viewing real-time logs
+    - Troubleshooting container problems
+    
+    Args:
+        project_root: Root directory with docker-compose.yml
+        service_name: Specific service to view logs for (None = all services)
+        tail: Number of recent lines to show (default: 100)
+        follow: Stream logs in real-time (default: False)
+    
+    Returns:
+        Formatted log output with:
+        - Service name(s)
+        - Log entries
+        - Timestamps
+    
+    Example:
+        view_logs(project_root="C:\\MyApp", service_name="backend", tail=50)
+        
+        Result: Shows last 50 lines of backend service logs
+    """
+    try:
+        logger.info(f"Viewing logs for {service_name or 'all services'} in {project_root}")
+        result = view_application_logs(
+            project_root,
+            service_name=service_name,
+            tail=tail or 100,
+            follow=follow if follow is not None else False
+        )
+        return result
+    except Exception as e:
+        return f"Error viewing logs: {str(e)}"
+
+
+# Tool 9: Capture Screenshot (NEW)
+@mcp.tool()
+def capture_app_screenshot(
+    url: str,
+    output_path: Optional[str] = None,
+    wait_time: Optional[int] = None
+) -> str:
+    """
+    Capture a screenshot of a webpage using Playwright capabilities.
+    Uses Playwright directly (not playwright MCP).
+    
+    What it does:
+    - Launches headless browser
+    - Navigates to URL
+    - Waits for page to load
+    - Captures full-page screenshot
+    - Saves to specified path
+    
+    Perfect for:
+    - Documenting application state
+    - Visual testing
+    - Creating screenshots for reports
+    - Verifying UI appearance
+    
+    Args:
+        url: URL to capture
+        output_path: Path to save screenshot (default: ./screenshot.png)
+        wait_time: Seconds to wait before capturing (default: 3)
+    
+    Returns:
+        Status message with screenshot path
+        
+    Example:
+        capture_app_screenshot(url="http://localhost:3000", output_path="./app.png")
+        
+        Result: Screenshot saved to ./app.png
+    """
+    try:
+        if not output_path:
+            output_path = os.path.join(os.getcwd(), "screenshot.png")
+        
+        logger.info(f"Capturing screenshot of {url}")
+        # Capture with base64 for chat embedding
+        result = capture_screenshot(url, output_path, wait_time or 3, return_base64=True)
+        
+        if result['status'] == 'success':
+            screenshot_path = result['path']
+            analysis = analyze_screenshot(screenshot_path)
+            
+            # Display the screenshot
+            display_result = display_screenshot(screenshot_path)
+            display_msg = ""
+            if display_result['status'] == 'success':
+                display_msg = f"\n📸 Screenshot displayed in default viewer!"
+            else:
+                display_msg = f"\n⚠️  Could not display screenshot: {display_result.get('message', 'Unknown error')}"
+            
+            # Include screenshot in response for chat display
+            response = f"✅ Screenshot captured successfully!\n\nPath: {screenshot_path}\nURL: {result['url']}\n\nAnalysis: {analysis['analysis']}{display_msg}"
+            
+            # Add base64 image data URL for chat embedding
+            if 'data_url' in result:
+                response += f"\n\n![Screenshot]({result['data_url']})"
+            
+            return response
+        else:
+            return f"❌ Failed to capture screenshot: {result.get('message', 'Unknown error')}"
+    except Exception as e:
+        return f"Error capturing screenshot: {str(e)}"
+
+
+# Tool 10: Validate Dockerfile (NEW)
+@mcp.tool()
+def validate_dockerfile_file(dockerfile_path: str) -> str:
+    """
+    Validate a Dockerfile for common issues and best practices.
+    
+    What it does:
+    - Checks if Dockerfile exists
+    - Validates syntax and structure
+    - Identifies security issues
+    - Suggests best practices
+    - Provides recommendations
+    
+    Perfect for:
+    - Before building images
+    - Code review
+    - CI/CD pipelines
+    - Ensuring Dockerfile quality
+    
+    Args:
+        dockerfile_path: Path to Dockerfile
+    
+    Returns:
+        Validation report with:
+        - Validity status
+        - Issues found
+        - Warnings
+        - Recommendations
+        
+    Example:
+        validate_dockerfile_file(dockerfile_path="./backend/Dockerfile")
+        
+        Result: Detailed validation report with issues and recommendations
+    """
+    try:
+        logger.info(f"Validating Dockerfile at {dockerfile_path}")
+        validation = validate_dockerfile(dockerfile_path)
+        
+        report = f"📋 **Dockerfile Validation Report**\n\n"
+        report += f"**File:** {dockerfile_path}\n"
+        report += f"**Status:** {'✅ Valid' if validation['valid'] else '❌ Invalid'}\n\n"
+        
+        if validation['issues']:
+            report += "**Issues:**\n"
+            for issue in validation['issues']:
+                report += f"  ❌ {issue}\n"
+            report += "\n"
+        
+        if validation['warnings']:
+            report += "**Warnings:**\n"
+            for warning in validation['warnings']:
+                report += f"  ⚠️  {warning}\n"
+            report += "\n"
+        
+        if validation['recommendations']:
+            report += "**Recommendations:**\n"
+            for rec in validation['recommendations']:
+                report += f"  💡 {rec}\n"
+            report += "\n"
+        
+        if not validation['issues'] and not validation['warnings']:
+            report += "✅ No issues found! Dockerfile looks good.\n"
+        
+        return report
+    except Exception as e:
+        return f"Error validating Dockerfile: {str(e)}"
 
 
 def main():
