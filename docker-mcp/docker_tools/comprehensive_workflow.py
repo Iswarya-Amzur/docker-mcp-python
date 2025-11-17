@@ -293,8 +293,8 @@ async def capture_screenshot_async(url: str, output_path: str, wait_time: int = 
 
 def capture_screenshot(url: str, output_path: str, wait_time: int = 3, return_base64: bool = False) -> Dict:
     """
-    Capture a screenshot of a webpage using Playwright capabilities.
-    This uses Playwright directly, not the playwright MCP.
+    Capture a screenshot of a webpage using direct Playwright library.
+    Uses the Playwright Python library for browser automation.
     Automatically uses async API if in asyncio context, otherwise sync API.
     
     Args:
@@ -378,6 +378,8 @@ def capture_screenshot(url: str, output_path: str, wait_time: int = 3, return_ba
 def display_screenshot(screenshot_path: str) -> Dict:
     """
     Display/show a screenshot by opening it in the default image viewer.
+    DISABLED: This function no longer opens external viewers to prevent popups.
+    Screenshots are embedded inline in chat instead.
     
     Args:
         screenshot_path: Path to screenshot file
@@ -385,56 +387,12 @@ def display_screenshot(screenshot_path: str) -> Dict:
     Returns:
         Dictionary with display result
     """
-    try:
-        if not os.path.exists(screenshot_path):
-            return {
-                'status': 'error',
-                'message': f'Screenshot file not found: {screenshot_path}'
-            }
-        
-        # Open screenshot in default image viewer
-        import webbrowser
-        import platform
-        
-        # Convert to absolute path
-        abs_path = os.path.abspath(screenshot_path)
-        
-        # Use file:// URL for local files
-        file_url = f'file://{abs_path}'
-        
-        # On Windows, use start command; on macOS use open; on Linux use xdg-open
-        if platform.system() == 'Windows':
-            os.startfile(abs_path)
-        elif platform.system() == 'Darwin':  # macOS
-            subprocess.run(['open', abs_path])
-        else:  # Linux
-            subprocess.run(['xdg-open', abs_path])
-        
-        logger.info(f"Opened screenshot in default viewer: {abs_path}")
-        
-        return {
-            'status': 'success',
-            'path': abs_path,
-            'message': f'Screenshot displayed: {abs_path}'
-        }
-    except Exception as e:
-        logger.warning(f"Could not display screenshot: {str(e)}")
-        # Fallback: try webbrowser
-        try:
-            import webbrowser
-            abs_path = os.path.abspath(screenshot_path)
-            file_url = f'file://{abs_path}'
-            webbrowser.open(file_url)
-            return {
-                'status': 'success',
-                'path': abs_path,
-                'message': f'Screenshot opened in browser: {abs_path}'
-            }
-        except Exception as e2:
-            return {
-                'status': 'error',
-                'message': f'Could not display screenshot: {str(e2)}'
-            }
+    # Return success without opening external viewer
+    # This prevents the popup window issue - screenshots are embedded inline in chat instead
+    return {
+        'status': 'skipped',
+        'message': 'External display disabled - screenshot embedded inline in chat'
+    }
 
 
 def analyze_screenshot(screenshot_path: str) -> Dict:
@@ -617,9 +575,16 @@ def comprehensive_dockerize_and_test(project_root: str,
             else:
                 report += f"📝 Creating Dockerfile for {service_name}...\n"
                 try:
+                    # Create analysis dict for dockerfile generation
+                    analysis = service_info.get('analysis', {})
+                    if not analysis:
+                        analysis = {
+                            'app_type': service_info.get('type', 'unknown'),
+                            'framework': service_info.get('framework', 'unknown')
+                        }
                     dockerfile_content = generate_dockerfile(
                         service_info['path'],
-                        app_type=service_info['type']
+                        analysis=analysis
                     )
                     with open(dockerfile_path, 'w') as f:
                         f.write(dockerfile_content)

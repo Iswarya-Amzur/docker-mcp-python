@@ -210,13 +210,6 @@ class EnhancedApplicationAnalyzer:
                         'deps': ['gatsby'],
                         'files': ['gatsby-config.js', 'gatsby-node.js'],
                         'port': 8000
-                    },
-                    'vite': {
-                        'deps': ['vite', '@vitejs/plugin-react'],
-                        'files': ['vite.config.js', 'vite.config.ts', 'index.html'],
-                        'configs': ['vite.config.js', 'vite.config.ts'],
-                        'port': 5173,
-                        'start_cmd': 'npm run dev'
                     }
                 },
                 'backend': {
@@ -382,33 +375,7 @@ class EnhancedApplicationAnalyzer:
         detected_frameworks.sort(key=lambda x: x['confidence'], reverse=True)
         
         if detected_frameworks:
-            # Handle special cases: prioritize Vite over Express for React apps
             primary_framework = detected_frameworks[0]
-            
-            # If we detect both Express and Vite/React, choose based on project structure
-            vite_frameworks = [f for f in detected_frameworks if f['name'] == 'vite']
-            react_frameworks = [f for f in detected_frameworks if f['name'] == 'react']
-            express_frameworks = [f for f in detected_frameworks if f['name'] == 'express']
-            
-            # If Vite is detected with React, prioritize Vite
-            if vite_frameworks and react_frameworks and express_frameworks:
-                primary_framework = vite_frameworks[0]
-            # If React but no Vite, check for Vite config files
-            elif react_frameworks and express_frameworks:
-                vite_config_exists = any(
-                    (self.app_path / config).exists() 
-                    for config in ['vite.config.js', 'vite.config.ts']
-                )
-                if vite_config_exists:
-                    # Create a synthetic Vite entry if config exists but not detected
-                    primary_framework = {
-                        'name': 'vite',
-                        'category': 'frontend', 
-                        'confidence': max(react_frameworks[0]['confidence'], express_frameworks[0]['confidence']) + 10,
-                        'port': 5173,
-                        'start_command': 'npm run dev'
-                    }
-            
             self.analysis['framework'] = primary_framework['name']
             
             # Use dynamic port detection instead of hardcoded values

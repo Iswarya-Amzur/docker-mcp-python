@@ -4,6 +4,12 @@ import os
 import json
 import logging
 from typing import Optional
+try:
+    from mcp.types import TextContent, ImageContent
+except ImportError:
+    # Fallback if mcp types not available
+    TextContent = dict
+    ImageContent = dict
 from docker_tools.analyzer import analyze_application
 from docker_tools.dockerfile_generator import generate_dockerfile
 from docker_tools.docker_builder import build_docker_image
@@ -67,9 +73,9 @@ async def dockerize_and_test(
     1. ✅ Analyzes codebase and detects ALL services (including databases)
     2. ✅ Creates/validates Docker files (checks if they exist, validates them)
     3. ✅ Builds containers and launches application in browser
-    4. ✅ Performs REAL browser interactions (clicks, forms, navigation)
+    4. ✅ Performs REAL browser interactions using direct Playwright library
     5. ✅ Captures screenshots as BASE64 (displays in chat!)
-    6. ✅ Tests application end-to-end with actual user actions
+    6. ✅ Tests application end-to-end with actual Playwright automation
     7. ✅ Sets up Grafana monitoring (if requested)
     8. ✅ Automatically fixes any errors encountered
     
@@ -106,7 +112,33 @@ async def dockerize_and_test(
             monitor_logs=monitor_logs if monitor_logs is not None else False,
             auto_fix_errors=auto_fix_errors if auto_fix_errors is not None else True
         )
-        return result
+        
+        # Format result for proper chat display
+        formatted_result = result.get("report", "")
+        
+        # If screenshots are available, append them to the report in a format that displays in chat
+        screenshots = result.get("screenshots", {})
+        if screenshots:
+            formatted_result += "\n\n" + "="*70 + "\n"
+            formatted_result += "📸 **SCREENSHOTS**\n\n"
+            
+            if screenshots.get("initial"):
+                formatted_result += "**Initial Application Load:**\n"
+                formatted_result += f"<img src='{screenshots['initial']}' style='max-width: 100%; height: auto;' />\n\n"
+            
+            if screenshots.get("after"):
+                formatted_result += "**After User Interactions:**\n"
+                formatted_result += f"<img src='{screenshots['after']}' style='max-width: 100%; height: auto;' />\n\n"
+        
+        # Return a proper dictionary structure
+        return {
+            "status": result.get("status", "success"),
+            "report": formatted_result,
+            "screenshots": screenshots,
+            "services": result.get("services", {}),
+            "databases": result.get("databases", {}),
+            "tests": result.get("tests", [])
+        }
     except Exception as e:
         logger.error(f"Error in comprehensive workflow: {e}", exc_info=True)
         return {
@@ -181,9 +213,9 @@ async def test_application_e2e(
     headless: Optional[bool] = None
 ) -> dict:
     """
-    🎯 PRIMARY TESTING TOOL - ASYNC with REAL Browser Interactions
+    🎯 PRIMARY TESTING TOOL - Direct Playwright Browser Automation
     
-    Complete end-to-end testing with ACTUAL user interactions using Playwright Async API.
+    Complete end-to-end testing using direct Playwright library (Async API).
     
     What it does:
     - Checks if containers are running (starts them if needed)
@@ -236,7 +268,43 @@ async def test_application_e2e(
             headless if headless is not None else False,
             show_browser=True
         )
-        return result
+        
+        # Format result for chat display with inline screenshots
+        formatted_output = "🚀 **E2E Test Results**\n\n"
+        
+        # Add steps
+        if 'steps' in result:
+            for step in result['steps']:
+                status_icon = "✅" if step.get('status') == 'success' else "⏳" if step.get('status') == 'running' else "❌"
+                formatted_output += f"{status_icon} {step.get('name', 'Step')}\n"
+        
+        # Add test summary
+        if 'test_summary' in result:
+            summary = result['test_summary']
+            formatted_output += f"\n**Test Summary:** {summary.get('passed', 0)}/{summary.get('total', 0)} tests passed\n"
+        
+        # Add screenshots with proper HTML formatting for chat display
+        screenshots = result.get("screenshots", {})
+        if screenshots:
+            formatted_output += "\n📸 **SCREENSHOTS**\n\n"
+            
+            if screenshots.get("initial"):
+                formatted_output += "**Initial Application Load:**\n"
+                formatted_output += f"<img src='{screenshots['initial']}' style='max-width: 100%; height: auto; border: 1px solid #ccc; margin: 10px 0;' alt='Initial Screenshot' />\n\n"
+            
+            if screenshots.get("after"):
+                formatted_output += "**After User Interactions:**\n" 
+                formatted_output += f"<img src='{screenshots['after']}' style='max-width: 100%; height: auto; border: 1px solid #ccc; margin: 10px 0;' alt='After Interactions Screenshot' />\n\n"
+        
+        # Return a proper dictionary structure with the formatted report
+        return {
+            "status": result.get("status", "success"),
+            "report": formatted_output,
+            "steps": result.get("steps", []),
+            "tests": result.get("tests", []),
+            "screenshots": screenshots,
+            "test_summary": result.get("test_summary", {})
+        }
     except Exception as e:
         logger.error(f"Error running E2E tests: {e}", exc_info=True)
         return {
@@ -698,10 +766,10 @@ def capture_app_screenshot(
     url: str,
     output_path: Optional[str] = None,
     wait_time: Optional[int] = None
-) -> str:
+):
     """
-    Capture a screenshot of a webpage using Playwright capabilities.
-    Uses Playwright directly (not playwright MCP).
+    Capture a screenshot of a webpage using direct Playwright library.
+    Uses the Playwright Python library for browser automation.
     
     What it does:
     - Launches headless browser
@@ -741,22 +809,35 @@ def capture_app_screenshot(
             screenshot_path = result['path']
             analysis = analyze_screenshot(screenshot_path)
             
-            # Display the screenshot
-            display_result = display_screenshot(screenshot_path)
-            display_msg = ""
-            if display_result['status'] == 'success':
-                display_msg = f"\n📸 Screenshot displayed in default viewer!"
-            else:
-                display_msg = f"\n⚠️  Could not display screenshot: {display_result.get('message', 'Unknown error')}"
+            # Build text response
+            text_response = f"✅ Screenshot captured successfully!\n\n"
+            text_response += f"Path: {screenshot_path}\n"
+            text_response += f"URL: {result['url']}\n"
+            text_response += f"Analysis: {analysis['analysis']}\n"
             
-            # Include screenshot in response for chat display
-            response = f"✅ Screenshot captured successfully!\n\nPath: {screenshot_path}\nURL: {result['url']}\n\nAnalysis: {analysis['analysis']}{display_msg}"
-            
-            # Add base64 image data URL for chat embedding
-            if 'data_url' in result:
-                response += f"\n\n![Screenshot]({result['data_url']})"
-            
-            return response
+            # Try to return structured content with text and image
+            try:
+                content = [
+                    TextContent(
+                        type="text",
+                        text=text_response
+                    )
+                ]
+                
+                # Add image content if base64 is available
+                if 'base64' in result:
+                    content.append(
+                        ImageContent(
+                            type="image",
+                            data=result['base64'],
+                            mimeType="image/png"
+                        )
+                    )
+                
+                return content
+            except:
+                # Fallback to simple string if structured content doesn't work
+                return text_response
         else:
             return f"❌ Failed to capture screenshot: {result.get('message', 'Unknown error')}"
     except Exception as e:

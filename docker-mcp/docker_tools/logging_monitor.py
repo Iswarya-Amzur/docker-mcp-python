@@ -203,9 +203,19 @@ providers:
             "tags": ["docker", "logs"],
             "timezone": "browser",
             "panels": [],
-            "schemaVersion": 16,
+            "schemaVersion": 38,
             "version": 0,
-            "refresh": "5s"
+            "refresh": "5s",
+            "time": {
+                "from": "now-1h",
+                "to": "now"
+            },
+            "timepicker": {
+                "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
+                "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d"]
+            },
+            "editable": True,
+            "hideControls": False
         },
         "overwrite": True  # Fixed: Python uses True, not true
     }
@@ -218,19 +228,67 @@ providers:
             "gridPos": {"h": 8, "w": 24, "x": 0, "y": panel_y},
             "type": "logs",
             "title": f"{service.capitalize()} Logs",
-            "datasource": "Loki",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
             "targets": [{
-                "expr": f'{{container=~".*{service}.*"}}',
-                "refId": "A"
+                "expr": f'{{job="docker", container_name=~".*{service}.*"}} |= ""',
+                "refId": "A",
+                "datasource": {
+                    "type": "loki",
+                    "uid": "loki"
+                }
             }],
             "options": {
                 "showTime": True,
                 "showLabels": True,
-                "sortOrder": "Descending"
+                "showCommonLabels": False,
+                "wrapLogMessage": True,
+                "sortOrder": "Descending",
+                "dedupStrategy": "none",
+                "enableLogDetails": True,
+                "prettifyLogMessage": False
             }
         }
         dashboard["dashboard"]["panels"].append(panel)
         panel_y += 8
+    
+    # Add an "All Logs" panel at the top if multiple services
+    if len(services) > 1:
+        all_logs_panel = {
+            "id": len(services) + 1,
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+            "type": "logs",
+            "title": "All Application Logs",
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "targets": [{
+                "expr": '{job="docker"} |= ""',
+                "refId": "A",
+                "datasource": {
+                    "type": "loki",
+                    "uid": "loki"
+                }
+            }],
+            "options": {
+                "showTime": True,
+                "showLabels": True,
+                "showCommonLabels": False,
+                "wrapLogMessage": True,
+                "sortOrder": "Descending",
+                "dedupStrategy": "none",
+                "enableLogDetails": True,
+                "prettifyLogMessage": False
+            }
+        }
+        # Insert at beginning and shift other panels down
+        dashboard["dashboard"]["panels"].insert(0, all_logs_panel)
+        # Update Y positions
+        for i, panel in enumerate(dashboard["dashboard"]["panels"][1:], 1):
+            panel["gridPos"]["y"] = i * 8
     
     dashboard_path = os.path.join(dashboard_dir, "app-logs.json")
     with open(dashboard_path, 'w') as f:
@@ -1135,6 +1193,13 @@ def start_application_containers(project_root: str) -> Dict:
         
         if compose_file:
             logger.info(f"Starting containers with {compose_file}")
+            # Verify file exists and is readable
+            compose_path = os.path.join(project_root, compose_file)
+            if not os.path.exists(compose_path):
+                results["status"] = "error"
+                results["message"] = f"Docker compose file {compose_file} not found at {compose_path}"
+                return results
+            
             result = subprocess.run(
                 ["docker-compose", "-f", compose_file, "up", "-d"],
                 cwd=project_root,
@@ -1245,10 +1310,33 @@ def smart_dockerize_and_show_logs(project_root: str, auto_fix: bool = True) -> s
     
     if not monitoring_exists:
         report += "Setting up Grafana + Loki + Promtail...\n"
+        report += "Detecting services...\n"
         try:
             from docker_tools.multi_service_handler import detect_services
             detected = detect_services(project_root)
-            service_list = list(detected.keys()) if detected else ["app"]
+            
+            if detected:
+                service_list = list(detected.keys())
+                report += f"📦 Detected {len(service_list)} service(s): {', '.join(service_list)}\n"
+            else:
+                # Try to get container names from running containers
+                try:
+                    result = subprocess.run(
+                        ["docker-compose", "ps", "--services"],
+                        cwd=project_root,
+                        capture_output=True,
+                        encoding='utf-8',
+                        timeout=10
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        service_list = [s.strip() for s in result.stdout.strip().split('\n') if s.strip()]
+                        report += f"📦 Found {len(service_list)} docker-compose service(s): {', '.join(service_list)}\n"
+                    else:
+                        service_list = ["app"]
+                        report += "⚠️  No services detected, using default: 'app'\n"
+                except:
+                    service_list = ["app"]
+                    report += "⚠️  Could not detect services, using default: 'app'\n"
             
             monitoring_result = setup_complete_monitoring(project_root, service_list)
             report += "✅ Monitoring stack created\n\n"
@@ -1256,6 +1344,38 @@ def smart_dockerize_and_show_logs(project_root: str, auto_fix: bool = True) -> s
             report += f"⚠️  Monitoring setup issue: {str(e)}\n\n"
     else:
         report += "✅ Monitoring stack already configured\n"
+        
+        # Check if dashboard file exists, recreate if missing
+        dashboard_file = os.path.join(project_root, "grafana", "provisioning", "dashboards", "app-logs.json")
+        if not os.path.exists(dashboard_file):
+            report += "⚠️  Dashboard file missing, recreating...\n"
+            try:
+                from docker_tools.multi_service_handler import detect_services
+                detected = detect_services(project_root)
+                
+                if detected:
+                    service_list = list(detected.keys())
+                else:
+                    # Try docker-compose services
+                    try:
+                        result = subprocess.run(
+                            ["docker-compose", "ps", "--services"],
+                            cwd=project_root,
+                            capture_output=True,
+                            encoding='utf-8',
+                            timeout=10
+                        )
+                        if result.returncode == 0 and result.stdout.strip():
+                            service_list = [s.strip() for s in result.stdout.strip().split('\n') if s.strip()]
+                        else:
+                            service_list = ["app"]
+                    except:
+                        service_list = ["app"]
+                
+                generate_grafana_dashboard(project_root, service_list)
+                report += f"✅ Dashboard recreated for services: {', '.join(service_list)}\n"
+            except Exception as e:
+                report += f"⚠️  Dashboard recreation failed: {str(e)}\n"
         
         # Ensure monitoring containers are running
         monitoring_containers = ["loki", "promtail", "grafana"]
@@ -1279,6 +1399,20 @@ def smart_dockerize_and_show_logs(project_root: str, auto_fix: bool = True) -> s
                     report += f"⚠️  Failed to start monitoring: {result.stderr[:200]}\n"
             except Exception as e:
                 report += f"⚠️  Error starting monitoring: {str(e)}\n"
+        else:
+            # Even if running, restart Grafana to pick up new dashboard
+            report += "Restarting Grafana to load dashboard...\n"
+            try:
+                subprocess.run(
+                    ["docker-compose", "-f", "docker-compose.monitoring.yml", "restart", "grafana"],
+                    cwd=project_root,
+                    capture_output=True,
+                    timeout=30
+                )
+                report += "✅ Grafana restarted\n"
+                time.sleep(3)
+            except:
+                pass
         report += "\n"
     
     # STEP 4: Validate Log Flow

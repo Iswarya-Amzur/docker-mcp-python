@@ -19,10 +19,10 @@ def fix_containerization_errors(app_path: str, error_message: str,
             "fix": "Add missing package to requirements.txt",
             "action": "Install package in Dockerfile before copying code"
         },
-        r"npm ERR!": {
+        r"npm ERR!|npm ci.*exit code 1|npm.*failed": {
             "issue": "NPM installation failed",
-            "fix": "Check package.json and package-lock.json",
-            "action": "Ensure both files are in the directory"
+            "fix": "Check package.json, package-lock.json, and network connectivity",
+            "action": "1. Ensure package-lock.json exists and is valid, 2. Run 'npm install' locally to fix lockfile, 3. Check for conflicting dependencies"
         },
         r"permission denied": {
             "issue": "File permissions issue",
@@ -68,6 +68,21 @@ def fix_containerization_errors(app_path: str, error_message: str,
             "issue": "Docker build failed",
             "fix": "Check Dockerfile syntax and dependencies",
             "action": "Review Dockerfile, check base image, and verify all dependencies are available"
+        },
+        r"no configuration file provided|configuration.*not found": {
+            "issue": "docker-compose.yml file missing",
+            "fix": "Generate docker-compose.yml file first",
+            "action": "Run dockerize_project() or manually create docker-compose.yml in project root"
+        },
+        r"npm ci.*exit code 1|npm.*failed.*production": {
+            "issue": "NPM ci failed during Docker build",
+            "fix": "Fix package-lock.json issues or missing dependencies",
+            "action": "1. Delete package-lock.json and run 'npm install' locally, 2. Commit new package-lock.json, 3. Ensure all dependencies are available"
+        },
+        r"version.*is obsolete|version.*will be ignored": {
+            "issue": "Docker Compose version field is obsolete",
+            "fix": "Remove version field from docker-compose.yml",
+            "action": "Edit docker-compose.yml and remove the 'version:' line at the top"
         },
         r"container.*exited|container.*stopped": {
             "issue": "Container exited unexpectedly",

@@ -77,11 +77,15 @@ def generate_docker_file(
     """
     try:
         logger.info(f"Generating Dockerfile for {app_path}")
+        # Create analysis dict for dockerfile generation
+        analysis = {
+            'app_type': app_type or "auto",
+            'framework': app_type or "auto"
+        }
         dockerfile_content = generate_dockerfile(
             app_path, 
-            app_type or "auto", 
-            python_version or "3.11", 
-            additional_packages or ""
+            analysis=analysis,
+            python_version=python_version or "3.11"
         )
         return dockerfile_content
     except Exception as e:

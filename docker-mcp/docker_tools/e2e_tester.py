@@ -43,7 +43,24 @@ def start_docker_compose(project_root: str, detached: bool = True) -> dict:
         Dictionary with status and output
     """
     try:
-        cmd = ["docker-compose", "up", "--build"]
+        # Validate docker-compose.yml exists
+        compose_files = ['docker-compose.yml', 'docker-compose.yaml']
+        compose_file = None
+        
+        for cf in compose_files:
+            compose_path = os.path.join(project_root, cf)
+            if os.path.exists(compose_path):
+                compose_file = cf
+                break
+        
+        if not compose_file:
+            return {
+                "status": "error",
+                "message": "docker-compose.yml not found",
+                "error": f"No docker-compose file found in {project_root}"
+            }
+        
+        cmd = ["docker-compose", "-f", compose_file, "up", "--build"]
         if detached:
             cmd.append("-d")
         
@@ -1979,8 +1996,24 @@ def check_containers_running(project_root: str) -> dict:
         Dictionary with status and list of running containers
     """
     try:
+        # Check if docker-compose.yml exists
+        compose_files = ['docker-compose.yml', 'docker-compose.yaml']
+        compose_file = None
+        
+        for cf in compose_files:
+            if os.path.exists(os.path.join(project_root, cf)):
+                compose_file = cf
+                break
+        
+        if not compose_file:
+            return {
+                "running": False,
+                "count": 0,
+                "error": "No docker-compose.yml file found"
+            }
+        
         result = subprocess.run(
-            ["docker-compose", "ps", "-q"],
+            ["docker-compose", "-f", compose_file, "ps", "-q"],
             cwd=project_root,
             capture_output=True,
             encoding='utf-8',
@@ -2163,30 +2196,14 @@ def launch_and_test(project_root: str, backend_port: int = 8000,
                 if "screenshot" in interactive_results:
                     screenshot_path = interactive_results['screenshot']
                     report += f"\n📸 Screenshot (Initial): {screenshot_path}\n"
-                    # Display the screenshot
-                    try:
-                        from docker_tools.comprehensive_workflow import display_screenshot
-                        display_result = display_screenshot(screenshot_path)
-                        if display_result['status'] == 'success':
-                            report += f"   ✅ Screenshot displayed!\n"
-                    except:
-                        pass
-                    # Embed screenshot in chat response
+                    # Embed screenshot inline in chat response
                     if "screenshot_data_url" in interactive_results:
                         report += f"\n![Initial Screenshot]({interactive_results['screenshot_data_url']})\n"
                 
                 if "screenshot_after" in interactive_results:
                     screenshot_path = interactive_results['screenshot_after']
                     report += f"\n📸 Screenshot (After Tests): {screenshot_path}\n"
-                    # Display the screenshot
-                    try:
-                        from docker_tools.comprehensive_workflow import display_screenshot
-                        display_result = display_screenshot(screenshot_path)
-                        if display_result['status'] == 'success':
-                            report += f"   ✅ Screenshot displayed!\n"
-                    except:
-                        pass
-                    # Embed screenshot in chat response
+                    # Embed screenshot inline in chat response
                     if "screenshot_after_data_url" in interactive_results:
                         report += f"\n![After Tests Screenshot]({interactive_results['screenshot_after_data_url']})\n"
                 

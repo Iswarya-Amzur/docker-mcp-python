@@ -23,17 +23,17 @@ A Model Context Protocol (MCP) server that provides Docker containerization tool
 
 ---
 
-### 2. **test_application_e2e** 🧪 - Comprehensive E2E Testing
-**Primary testing tool** - Launch browser with REAL user interactions!
+### 2. **test_application_e2e** 🧪 - Browser Automation Testing
+**Primary testing tool** - Direct Playwright browser automation!
 - Checks container status (starts if needed)
-- **Launches visible browser** (Chromium)
-- **Performs real interactions:**
+- **Launches visible browser** using Playwright library (Chromium)
+- **Performs real browser automation:**
   - Clicks buttons
   - Fills forms
   - Creates items
   - Navigates pages
   - Submits forms
-- Takes before/after screenshots
+- Captures screenshots as base64
 - Validates frontend-backend communication
 - **Keeps browser open 15 seconds for inspection**
 - Generates detailed test report
@@ -79,12 +79,12 @@ A Model Context Protocol (MCP) server that provides Docker containerization tool
 
 ---
 
-### 6. **create_playwright_tests** 🎬 - Test Generation
-**Test generation tool** - Generate automated test suites!
+### 6. **create_playwright_tests** 🎬 - Test Template Generation
+**Test generation tool** - Generate Playwright test templates!
 - Creates e2e-tests directory
-- Generates Playwright config
-- Creates sample tests (9+ scenarios)
-- Ready for CI/CD
+- Generates Playwright config (direct library usage)
+- Creates sample test templates (9+ scenarios)
+- Ready for CI/CD integration
 
 **Use:** `create_playwright_tests(project_root="C:\\MyApp")`
 

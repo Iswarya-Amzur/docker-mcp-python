@@ -168,31 +168,17 @@ class ProductionServiceDetector:
     
     def _scan_root_level(self):
         """Check if root directory is a single service."""
-        # First check if there are potential service subdirectories
-        service_dirs = []
-        if self.project_root.exists():
-            for item in self.project_root.iterdir():
-                if (item.is_dir() and 
-                    not item.name.startswith('.') and 
-                    item.name not in ['node_modules', '__pycache__', 'venv', '.git']):
-                    # Check if it looks like a service directory
-                    if any(term in item.name.lower() for term in 
-                           ['frontend', 'backend', 'client', 'server', 'api', 'web', 'app', 'service']):
-                        service_dirs.append(item)
-        
-        # Only treat root as a service if no service subdirectories exist
-        if not service_dirs:
-            analysis = analyze_application(str(self.project_root))
-            if analysis.get('app_type') and analysis['app_type'] != 'unknown':
-                self.services['app'] = {
-                    'path': str(self.project_root),
-                    'type': 'application',
-                    'category': 'primary',
-                    'framework': analysis.get('framework', 'unknown'),
-                    'language': analysis['app_type'],
-                    'analysis': analysis,
-                    'detection_method': 'root_analysis'
-                }
+        analysis = analyze_application(str(self.project_root))
+        if analysis.get('app_type') and analysis['app_type'] != 'unknown':
+            self.services['app'] = {
+                'path': str(self.project_root),
+                'type': 'application',
+                'category': 'primary',
+                'framework': analysis.get('framework', 'unknown'),
+                'language': analysis['app_type'],
+                'analysis': analysis,
+                'detection_method': 'root_analysis'
+            }
     
     def _scan_direct_children(self):
         """Scan immediate child directories for services."""
@@ -689,19 +675,16 @@ def generate_docker_compose(project_root: str, services: dict) -> str:
     compose_content = """services:
 """
     
-    # Define port mappings based on service type with conflict resolution
+    # Define port mappings based on service type
     port_mappings = {
         'backend': 8000,
-        'api': 8000, 
+        'api': 8000,
         'server': 8000,
         'frontend': 3000,
         'client': 3000,
         'web': 3000,
         'app': 3000
     }
-    
-    # Track used ports to avoid conflicts
-    used_ports = set()
     
     for service_name, service_info in services.items():
         service_type = service_info.get('framework', service_info.get('type', 'unknown'))
@@ -714,15 +697,9 @@ def generate_docker_compose(project_root: str, services: dict) -> str:
             container_port = detected_port
             host_port = detected_port
         else:
-            # Use service name-based mapping or fallback to old logic
-            container_port = port_mappings.get(service_name.lower(), 
-                                             8000 if service_type == 'python' else 3000)
-            host_port = container_port
-        
-        # Resolve port conflicts by incrementing host port
-        while host_port in used_ports:
-            host_port += 1
-        used_ports.add(host_port)
+            # Fallback to old logic
+            container_port = 8000 if service_type == 'python' else 3000
+            host_port = port_mappings.get(service_name.lower(), container_port)
         
         # Determine the CMD based on service type and use dynamic port
         if service_type == 'python':
@@ -912,15 +889,10 @@ def dockerize_full_project(project_root: str, auto_start: bool = True) -> str:
     result += "\n**Step 3: Generating docker-compose.yml...**\n"
     compose_content = generate_docker_compose(project_root, services)
     
-    # Verify docker-compose.yml was actually created
-    compose_path = os.path.join(project_root, 'docker-compose.yml')
-    if "Error" not in compose_content and os.path.exists(compose_path):
-        result += f"✅ docker-compose.yml created at {compose_path}\n"
+    if "Error" not in compose_content:
+        result += f"✅ docker-compose.yml created at {os.path.join(project_root, 'docker-compose.yml')}\n"
     else:
-        if "Error" in compose_content:
-            result += f"❌ {compose_content}\n"
-        else:
-            result += f"❌ docker-compose.yml creation failed - file not found at {compose_path}\n"
+        result += f"❌ {compose_content}\n"
         dockerfile_success = False
     
     # Step 4: Build and start containers (if requested and no errors)
@@ -932,18 +904,9 @@ def dockerize_full_project(project_root: str, auto_start: bool = True) -> str:
             # Import here to avoid circular dependency
             from .e2e_tester import start_docker_compose, wait_for_services
             
-            # Validate docker-compose.yml exists before attempting to start
-            compose_path = os.path.join(project_root, 'docker-compose.yml')
-            if not os.path.exists(compose_path):
-                result += f"❌ docker-compose.yml not found at {compose_path}\n"
-                result += "🔧 **Manual Steps:**\n"
-                result += f"   1. Generate docker-compose.yml first\n"
-                result += f"   2. Check file permissions\n"
-                dockerfile_success = False
-            else:
-                # Start docker-compose with build
-                start_result = start_docker_compose(project_root, detached=True)
-                
+            # Start docker-compose with build
+            start_result = start_docker_compose(project_root, detached=True)
+            
             if start_result["status"] == "success":
                 result += "✅ Containers built and started successfully!\n\n"
                 
@@ -991,14 +954,14 @@ def dockerize_full_project(project_root: str, auto_start: bool = True) -> str:
                 result += f"      test_application_e2e(project_root=\"{project_root}\")\n\n"
                 result += f"   2. View logs:\n"
                 result += f"      show_app_logs(project_root=\"{project_root}\")\n\n"
-            
+                
             else:
-                    result += f"❌ Failed to start containers\n"
-                    result += f"   Error: {start_result.get('error', start_result.get('message'))}\n\n"
-                    result += "🔧 **Manual Steps:**\n"
-                    result += f"   1. Check docker-compose.yml configuration\n"
-                    result += f"   2. Try manually: docker-compose up --build\n"
-                    result += f"   3. Check logs: docker-compose logs\n"
+                result += f"❌ Failed to start containers\n"
+                result += f"   Error: {start_result.get('error', start_result.get('message'))}\n\n"
+                result += "🔧 **Manual Steps:**\n"
+                result += f"   1. Check docker-compose.yml configuration\n"
+                result += f"   2. Try manually: docker-compose up --build\n"
+                result += f"   3. Check logs: docker-compose logs\n"
         
         except Exception as e:
             result += f"⚠️  Could not auto-start containers: {str(e)}\n\n"

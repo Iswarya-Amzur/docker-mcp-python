@@ -1,9 +1,10 @@
 """
-Async Comprehensive Docker MCP Workflow Orchestrator
+Async Comprehensive Docker Workflow with Direct Playwright Integration
 
 This module provides a complete ASYNC end-to-end workflow for dockerizing applications,
-testing them, monitoring logs, and fixing errors automatically.
+testing them with direct Playwright browser automation, monitoring logs, and fixing errors.
 
+Uses Playwright Python library directly for all browser interactions.
 Returns base64-encoded screenshots for display in chat.
 """
 
@@ -182,12 +183,28 @@ async def comprehensive_dockerize_and_test_async(
     report += "**STEP 1: Analyzing Codebase & Detecting Services...**\n\n"
     
     try:
-        # Detect application services
-        services = detect_services(project_root)
-        result["services"] = services
-        report += f"✅ Detected {len(services)} application service(s):\n"
-        for name, info in services.items():
-            report += f"   - {name}: {info['type']} ({info['path']})\n"
+        # Detect application services using enhanced detector
+        detection_result = detect_services(project_root)
+        result["services"] = detection_result
+        
+        # Extract actual application services
+        services = detection_result.get('application_services', {})
+        
+        if services:
+            report += f"✅ Detected {len(services)} application service(s):\n"
+            for name, info in services.items():
+                service_type = info.get('type', 'unknown')
+                service_path = info.get('path', 'unknown')
+                report += f"   - {name}: {service_type} ({service_path})\n"
+        else:
+            report += "ℹ️  No application services detected\n"
+        
+        # Report summary if available
+        if 'detection_summary' in detection_result:
+            summary = detection_result['detection_summary']
+            total_services = summary.get('total_services', 0)
+            if total_services > len(services):
+                report += f"   (Total {total_services} services including infrastructure/worker services)\n"
         
         # Detect database services
         databases = detect_database_services(project_root)
@@ -204,6 +221,7 @@ async def comprehensive_dockerize_and_test_async(
         report += f"⚠️  Error during analysis: {str(e)}\n\n"
         services = {}
         databases = {}
+        detection_result = {'application_services': {}}
     
     # STEP 2: Check/Create Docker files
     report += "=" * 70 + "\n"
@@ -236,9 +254,16 @@ async def comprehensive_dockerize_and_test_async(
             else:
                 report += f"📝 Creating Dockerfile for {service_name}...\n"
                 try:
+                    # Create analysis dict for dockerfile generation
+                    analysis = service_info.get('analysis', {})
+                    if not analysis:
+                        analysis = {
+                            'app_type': service_info.get('type', 'unknown'),
+                            'framework': service_info.get('framework', 'unknown')
+                        }
                     dockerfile_content = generate_dockerfile(
                         service_info['path'],
-                        app_type=service_info['type']
+                        analysis=analysis
                     )
                     with open(dockerfile_path, 'w') as f:
                         f.write(dockerfile_content)
@@ -252,6 +277,29 @@ async def comprehensive_dockerize_and_test_async(
     # STEP 3: Build containers and launch application
     report += "=" * 70 + "\n"
     report += "**STEP 3: Building Containers & Launching Application...**\n\n"
+    
+    # Initialize ports with detected values from services analysis
+    backend_port = 8000
+    frontend_port = 3000
+    
+    # Extract ports from service analysis
+    for name, service_info in services.items():
+        analysis = service_info.get('analysis', {})
+        detected_port = analysis.get('port')
+        
+        if detected_port:
+            if name.lower() in ['backend', 'api', 'server'] or service_info.get('category') == 'web_service':
+                backend_port = detected_port
+            elif name.lower() in ['frontend', 'client', 'web'] or service_info.get('category') == 'frontend':
+                frontend_port = detected_port
+            else:
+                # For single-service apps, use the detected port as primary
+                if len(services) == 1:
+                    app_type = service_info.get('language', '')
+                    if app_type == 'node':
+                        frontend_port = detected_port
+                    else:
+                        backend_port = detected_port
     
     try:
         # Check if containers are already running
@@ -268,14 +316,6 @@ async def comprehensive_dockerize_and_test_async(
                 
                 # Wait for services to be ready
                 report += "⏳ Waiting for services to be ready...\n"
-                backend_port = 8000
-                frontend_port = 3000
-                
-                for name in services.keys():
-                    if name.lower() in ['backend', 'api', 'server']:
-                        backend_port = 8000
-                    elif name.lower() in ['frontend', 'client', 'web']:
-                        frontend_port = 3000
                 
                 wait_result = await wait_for_services_async("localhost", backend_port, frontend_port, timeout=60)
                 
@@ -341,12 +381,10 @@ async def comprehensive_dockerize_and_test_async(
                 result["screenshots"] = test_result["screenshots"]
                 
                 if test_result["screenshots"].get("initial"):
-                    report += "📸 **Initial Screenshot Captured**\n"
-                    report += f"![Initial Load]({test_result['screenshots']['initial']})\n\n"
+                    report += "📸 **Initial Screenshot Captured** (available in result data)\n\n"
                 
                 if test_result["screenshots"].get("after"):
-                    report += "📸 **Post-Interaction Screenshot Captured**\n"
-                    report += f"![After Interactions]({test_result['screenshots']['after']})\n\n"
+                    report += "📸 **Post-Interaction Screenshot Captured** (available in result data)\n\n"
             
             # Add test results
             if 'tests' in test_result:

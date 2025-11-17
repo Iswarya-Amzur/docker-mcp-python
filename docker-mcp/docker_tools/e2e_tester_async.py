@@ -1,10 +1,10 @@
 """
-Async E2E Testing Module for FastMCP
+Async E2E Testing Module using Direct Playwright Library
 
-This module provides ASYNC end-to-end testing using Playwright Async API.
-Designed specifically to work within FastMCP's asyncio event loop.
+This module provides browser automation testing using the Playwright Python library.
+Uses Playwright's Async API for seamless integration with FastMCP's asyncio event loop.
 
-NO AUTO-FIX fallbacks - runs Playwright directly in async mode.
+Direct Playwright integration - no wrappers, no MCP layers, just pure Playwright.
 Returns base64-encoded screenshots for display in chat.
 """
 
@@ -353,14 +353,14 @@ async def _test_form_submission_async(page: Page, results: dict):
 async def run_interactive_tests_async(
     project_root: str,
     frontend_url: str = "http://localhost:3000",
-    backend_url: str = "http://localhost:8000",
+    backend_url: str = "http://localhost:3000",
     headless: bool = False,
     perform_interactions: bool = True
 ) -> dict:
     """
-    Run interactive Playwright tests using ASYNC API.
+    Run browser automation tests using direct Playwright library (Async API).
     
-    NO AUTO-FIX fallbacks - runs Playwright directly.
+    Pure Playwright integration - uses playwright.async_api directly.
     Returns base64-encoded screenshots.
     
     Args:
