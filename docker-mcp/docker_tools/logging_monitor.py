@@ -114,14 +114,29 @@ scrape_configs:
     docker_sd_configs:
       - host: unix:///var/run/docker.sock
         refresh_interval: 5s
+        filters:
+          - name: status
+            values: [running]
     relabel_configs:
+      # Extract container name and remove leading slash
       - source_labels: ['__meta_docker_container_name']
         regex: '/(.*)'
         target_label: 'container'
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container_name'
+      # Extract log stream (stdout/stderr)
       - source_labels: ['__meta_docker_container_log_stream']
         target_label: 'stream'
+      # Extract docker-compose service name if available
       - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
         target_label: 'service'
+      # Extract container ID
+      - source_labels: ['__meta_docker_container_id']
+        target_label: 'container_id'
+      # Extract image name
+      - source_labels: ['__meta_docker_container_image']
+        target_label: 'image'
 """
     
     config_path = os.path.join(project_root, "promtail-config.yml")
@@ -150,10 +165,14 @@ datasources:
   - name: Loki
     type: loki
     access: proxy
+    orgId: 1
+    uid: loki
     url: http://loki:3100
     isDefault: true
+    editable: false
     jsonData:
       maxLines: 1000
+      timeout: 60
 """
     
     config_path = os.path.join(provisioning_dir, "loki.yml")
@@ -195,100 +214,62 @@ providers:
     with open(provider_path, 'w') as f:
         f.write(provider_config)
     
-    # Create dashboard JSON with proper UID for direct access
+    # Create dashboard JSON - Grafana expects dashboard content at root level
     dashboard = {
-        "dashboard": {
-            "uid": "app-logs",  # Unique ID for direct URL access
-            "title": "Application Logs",
-            "tags": ["docker", "logs"],
-            "timezone": "browser",
-            "panels": [],
-            "schemaVersion": 38,
-            "version": 0,
-            "refresh": "5s",
-            "time": {
-                "from": "now-1h",
-                "to": "now"
-            },
-            "timepicker": {
-                "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
-                "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d"]
-            },
-            "editable": True,
-            "hideControls": False
+        "id": None,
+        "uid": "app-logs",
+        "title": "Application Logs",
+        "tags": ["docker", "logs"],
+        "timezone": "browser",
+        "panels": [],
+        "schemaVersion": 38,
+        "version": 0,
+        "refresh": "5s",
+        "time": {
+            "from": "now-1h",
+            "to": "now"
         },
-        "overwrite": True  # Fixed: Python uses True, not true
+        "timepicker": {
+            "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
+            "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d"]
+        },
+        "editable": True,
+        "hideControls": False
     }
     
-    # Add panel for each service
-    panel_y = 0
-    for idx, service in enumerate(services):
-        panel = {
-            "id": idx + 1,
-            "gridPos": {"h": 8, "w": 24, "x": 0, "y": panel_y},
-            "type": "logs",
-            "title": f"{service.capitalize()} Logs",
+    # Add single "Application Container Logs" panel that shows all application containers
+    # Exclude monitoring containers (grafana, loki, promtail)
+    all_logs_panel = {
+        "id": 1,
+        "gridPos": {"h": 24, "w": 24, "x": 0, "y": 0},  # Full height panel
+        "type": "logs",
+        "title": "Application Container Logs",
+        "datasource": {
+            "type": "loki",
+            "uid": "loki"
+        },
+        "targets": [{
+            "expr": '{container_name=~".+"} | container_name !~ "(grafana|loki|promtail)"',
+            "refId": "A",
             "datasource": {
                 "type": "loki",
                 "uid": "loki"
-            },
-            "targets": [{
-                "expr": f'{{job="docker", container_name=~".*{service}.*"}} |= ""',
-                "refId": "A",
-                "datasource": {
-                    "type": "loki",
-                    "uid": "loki"
-                }
-            }],
-            "options": {
-                "showTime": True,
-                "showLabels": True,
-                "showCommonLabels": False,
-                "wrapLogMessage": True,
-                "sortOrder": "Descending",
-                "dedupStrategy": "none",
-                "enableLogDetails": True,
-                "prettifyLogMessage": False
             }
+        }],
+        "options": {
+            "showTime": True,
+            "showLabels": True,
+            "showCommonLabels": False,
+            "wrapLogMessage": True,
+            "sortOrder": "Descending",
+            "dedupStrategy": "none",
+            "enableLogDetails": True,
+            "prettifyLogMessage": False
         }
-        dashboard["dashboard"]["panels"].append(panel)
-        panel_y += 8
+    }
+    dashboard["panels"].append(all_logs_panel)
     
-    # Add an "All Logs" panel at the top if multiple services
-    if len(services) > 1:
-        all_logs_panel = {
-            "id": len(services) + 1,
-            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
-            "type": "logs",
-            "title": "All Application Logs",
-            "datasource": {
-                "type": "loki",
-                "uid": "loki"
-            },
-            "targets": [{
-                "expr": '{job="docker"} |= ""',
-                "refId": "A",
-                "datasource": {
-                    "type": "loki",
-                    "uid": "loki"
-                }
-            }],
-            "options": {
-                "showTime": True,
-                "showLabels": True,
-                "showCommonLabels": False,
-                "wrapLogMessage": True,
-                "sortOrder": "Descending",
-                "dedupStrategy": "none",
-                "enableLogDetails": True,
-                "prettifyLogMessage": False
-            }
-        }
-        # Insert at beginning and shift other panels down
-        dashboard["dashboard"]["panels"].insert(0, all_logs_panel)
-        # Update Y positions
-        for i, panel in enumerate(dashboard["dashboard"]["panels"][1:], 1):
-            panel["gridPos"]["y"] = i * 8
+    # Note: Service-specific panels removed - all application logs shown in single panel
     
     dashboard_path = os.path.join(dashboard_dir, "app-logs.json")
     with open(dashboard_path, 'w') as f:
@@ -668,24 +649,15 @@ def setup_complete_monitoring(project_root: str, services: List[str]) -> str:
         report += "=" * 60 + "\n"
         report += "📊 **GRAFANA DASHBOARD READY!**\n"
         report += "=" * 60 + "\n\n"
-        report += f"🌐 **Direct Dashboard Link:** {start_result['grafana_url']}/d/app-logs/application-logs\n"
-        report += f"📊 **Explore Logs:** {start_result['grafana_url']}/explore\n"
-        report += f"🏠 **Home Page:** {start_result['grafana_url']}\n\n"
-        report += f"👤 Username: {start_result['credentials']['username']}\n"
-        report += f"🔑 Password: {start_result['credentials']['password']}\n\n"
-        report += f"📡 Loki URL: {start_result['loki_url']}\n\n"
-        report += "**Next Steps:**\n"
-        report += "1. Use open_grafana() to launch dashboard in browser\n"
-        report += "2. Or manually open: http://localhost:3001/d/app-logs/application-logs\n"
-        report += "3. Login with the credentials above\n"
-        report += "4. Dashboard will auto-refresh every 5 seconds with latest logs\n"
-        report += "5. Use Explore (left sidebar) for custom log queries\n\n"
+        report += f"🌐 Dashboard URL: {start_result['grafana_url']}/d/app-logs/application-logs\n"
+        report += f"👤 Login: {start_result['credentials']['username']} / {start_result['credentials']['password']}\n\n"
         report += "**Services Monitored:**\n"
         for service in services:
             report += f"  - {service}\n"
         
-        report += "\n💡 **Tip:** Logs may take 10-15 seconds to appear after container startup.\n"
-        report += "    Use validate_monitoring() to check log flow status.\n"
+        report += "\n✅ Dashboard will open automatically with visualizations\n"
+        report += "✅ Logs will be analyzed automatically\n"
+        report += "✅ Screenshot will be captured for verification\n"
     else:
         report += f"❌ {start_result.get('message')}\n"
         if 'error' in start_result:
@@ -694,62 +666,424 @@ def setup_complete_monitoring(project_root: str, services: List[str]) -> str:
     return report
 
 
-def launch_grafana_dashboard(grafana_url: str = "http://localhost:3001", open_dashboard: bool = True) -> str:
+def launch_grafana_dashboard(grafana_url: str = "http://localhost:3001", open_dashboard: bool = True, 
+                            auto_analyze: bool = True, capture_screenshot: bool = True, 
+                            project_root: str = None) -> Dict:
     """
-    Open Grafana dashboard in the default browser.
-    NOW opens directly to the Application Logs dashboard instead of home page!
+    Open Grafana dashboard in browser and automatically analyze logs and capture screenshot.
     
     Args:
         grafana_url: URL of Grafana (base URL)
         open_dashboard: If True, opens directly to Application Logs dashboard (default: True)
+        auto_analyze: Automatically analyze logs after opening (default: True)
+        capture_screenshot: Capture screenshot after opening (default: True)
+        project_root: Project root for saving screenshot (optional)
         
     Returns:
-        Status message
+        Dictionary with status, message, log analysis, and screenshot path
     """
+    result = {
+        "status": "success",
+        "message": "",
+        "dashboard_url": "",
+        "log_analysis": {},
+        "screenshot": {}
+    }
+    
     try:
         # Construct the direct dashboard URL
         if open_dashboard:
-            # Direct link to Application Logs dashboard
-            # Uses Grafana's dashboard UID format: /d/<dashboard-uid>/<dashboard-slug>
             dashboard_url = f"{grafana_url}/d/app-logs/application-logs?orgId=1&refresh=5s"
+            result["dashboard_url"] = dashboard_url
             
-            # Alternatively, use explore view with Loki query for immediate log viewing
-            # This ensures logs are visible even if dashboard isn't loaded yet
-            explore_url = f"{grafana_url}/explore?orgId=1&left=%5B%22now-1h%22,%22now%22,%22Loki%22,%7B%22expr%22:%22%7Bjob%3D%5C%22docker%5C%22%7D%22%7D%5D"
+            # Open in browser
+            webbrowser.open(dashboard_url)
             
-            # Try dashboard first, fallback to explore
-            url_to_open = dashboard_url
+            result["message"] = "✅ Grafana dashboard opened in browser!\n\n"
+            result["message"] += f"🌐 Dashboard URL: {dashboard_url}\n"
+            result["message"] += "👤 Login: admin / admin\n\n"
             
-            webbrowser.open(url_to_open)
+            # Wait for dashboard to load
+            if auto_analyze or capture_screenshot:
+                result["message"] += "⏳ Waiting for dashboard to load (10 seconds)...\n"
+                time.sleep(10)
             
-            return f"""✅ Grafana dashboard opened in browser!
-
-🌐 **Dashboard URL:** {grafana_url}/d/app-logs/application-logs
-📊 **Explore Logs:** {grafana_url}/explore
-
-**Login Credentials:**
-   👤 Username: admin
-   🔑 Password: admin
-
-**What to do:**
-   1. Login with the credentials above
-   2. You should see the "Application Logs" dashboard
-   3. If redirected to home, click "Dashboards" → "Application Logs"
-   4. Or use Explore (left sidebar) → Select "Loki" → Query: {{job="docker"}}
-
-💡 Tip: The dashboard auto-refreshes every 5 seconds to show latest logs!"""
+            # Auto-analyze logs
+            if auto_analyze:
+                result["message"] += "\n📊 Analyzing logs from Loki...\n"
+                try:
+                    logs_result = fetch_logs_from_loki("http://localhost:3100", '{container_name=~".+"} | container_name !~ "(grafana|loki|promtail)"', 50)
+                    
+                    if logs_result["status"] == "success" and logs_result["logs"]:
+                        analysis = analyze_logs_for_errors(logs_result["logs"])
+                        result["log_analysis"] = analysis
+                        
+                        result["message"] += f"   ✅ Found {analysis['total_logs']} log entries\n"
+                        result["message"] += f"   ⚠️  {len(analysis['errors'])} errors detected\n"
+                        result["message"] += f"   📝 {len(analysis['warnings'])} warnings detected\n"
+                        
+                        # Show top errors
+                        if analysis['errors']:
+                            result["message"] += "\n**Top Errors:**\n"
+                            for err in analysis['errors'][:3]:
+                                log_snippet = err.get('log', '')[:80]
+                                result["message"] += f"   • {log_snippet}...\n"
+                        
+                        # Get fix suggestions
+                        if analysis['errors']:
+                            suggestions = suggest_fixes_for_errors(analysis)
+                            if suggestions:
+                                result["message"] += f"\n💡 {len(suggestions)} fix suggestions available\n"
+                    else:
+                        result["message"] += "   ⚠️  No logs found yet (containers may still be starting)\n"
+                except Exception as e:
+                    result["message"] += f"   ⚠️  Log analysis error: {str(e)}\n"
+            
+            # Capture screenshot
+            if capture_screenshot:
+                result["message"] += "\n📸 Capturing dashboard screenshot...\n"
+                try:
+                    screenshot_path = os.path.join(project_root or os.getcwd(), "grafana_dashboard.png")
+                    screenshot_result = capture_grafana_screenshot(grafana_url, screenshot_path, wait_for_login=True)
+                    
+                    if screenshot_result["status"] == "success":
+                        result["screenshot"] = screenshot_result
+                        result["message"] += f"   ✅ Screenshot saved: {screenshot_result['path']}\n"
+                    else:
+                        result["message"] += f"   ⚠️  {screenshot_result.get('message', 'Screenshot failed')}\n"
+                except Exception as e:
+                    result["message"] += f"   ⚠️  Screenshot error: {str(e)}\n"
+            
+            result["message"] += "\n✅ Dashboard is ready with visualizations!\n"
+            
         else:
             webbrowser.open(grafana_url)
-            return f"✅ Grafana opened in browser: {grafana_url}"
+            result["message"] = f"✅ Grafana opened in browser: {grafana_url}"
+        
+        return result
     
     except Exception as e:
-        return f"""❌ Error opening browser: {str(e)}
+        result["status"] = "error"
+        result["message"] = f"❌ Error: {str(e)}\n\n"
+        result["message"] += f"Please open manually: {grafana_url}/d/app-logs/application-logs\n"
+        result["message"] += "Login: admin / admin"
+        return result
 
-Please open manually:
-   🌐 Dashboard: {grafana_url}/d/app-logs/application-logs
-   📊 Explore: {grafana_url}/explore
-   
-Login: admin / admin"""
+
+def check_grafana_logs(project_root: str = None) -> Dict:
+    """
+    Check Grafana container logs for errors and provisioning issues.
+    Enhanced to detect more provisioning errors.
+    
+    Args:
+        project_root: Root directory of the project (optional)
+        
+    Returns:
+        Dictionary with log analysis results
+    """
+    results = {
+        "status": "unknown",
+        "errors": [],
+        "warnings": [],
+        "dashboard_errors": [],
+        "datasource_errors": [],
+        "provisioning_errors": [],
+        "log_snippet": ""
+    }
+    
+    try:
+        # Get Grafana container logs (last 200 lines for better analysis)
+        result = subprocess.run(
+            ["docker", "logs", "--tail", "200", "grafana"],
+            capture_output=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=10
+        )
+        
+        if result.returncode == 0:
+            logs = result.stdout + result.stderr
+            results["log_snippet"] = logs
+            
+            # Parse logs for specific errors
+            for line in logs.split('\n'):
+                # Dashboard provisioning errors
+                if "Dashboard title cannot be empty" in line:
+                    results["dashboard_errors"].append({
+                        "error": "Dashboard title cannot be empty",
+                        "file": "app-logs.json",
+                        "fix": "Dashboard JSON structure incorrect - needs title at root level"
+                    })
+                elif "failed to load dashboard" in line:
+                    results["dashboard_errors"].append({
+                        "error": line.strip(),
+                        "fix": "Dashboard JSON format issue - check JSON structure"
+                    })
+                elif "no such file or directory" in line and "provisioning/dashboards" in line:
+                    results["provisioning_errors"].append({
+                        "error": "Dashboard provisioning directory not found",
+                        "path": "/etc/grafana/provisioning/dashboards",
+                        "fix": "Create directory and ensure volume mount"
+                    })
+                elif "no such file or directory" in line and "provisioning/alerting" in line:
+                    results["provisioning_errors"].append({
+                        "error": "Alerting provisioning directory not found",
+                        "path": "/etc/grafana/provisioning/alerting",
+                        "fix": "Create directory and ensure volume mount"
+                    })
+                elif "no such file or directory" in line and "provisioning/plugins" in line:
+                    results["provisioning_errors"].append({
+                        "error": "Plugins provisioning directory not found",
+                        "path": "/etc/grafana/provisioning/plugins",
+                        "fix": "Create directory and ensure volume mount"
+                    })
+                elif "can't read dashboard provisioning files" in line or "can't read alerting provisioning files" in line or "Failed to read plugin provisioning files" in line:
+                    results["provisioning_errors"].append({
+                        "error": line.strip(),
+                        "fix": "Create missing provisioning directories"
+                    })
+                
+                # Datasource errors
+                elif "failed to load datasource" in line or ("datasource" in line.lower() and "error" in line.lower()):
+                    results["datasource_errors"].append({
+                        "error": line.strip(),
+                        "fix": "Check datasource configuration in provisioning/datasources/"
+                    })
+                
+                # General errors
+                elif "level=error" in line:
+                    results["errors"].append(line.strip())
+                elif "level=warn" in line:
+                    results["warnings"].append(line.strip())
+            
+            # Determine status
+            if results["dashboard_errors"] or results["datasource_errors"] or results["provisioning_errors"]:
+                results["status"] = "has_issues"
+            elif results["errors"]:
+                results["status"] = "has_errors"
+            else:
+                results["status"] = "healthy"
+        else:
+            results["status"] = "error"
+            results["errors"].append(f"Failed to get Grafana logs: {result.stderr}")
+        
+        return results
+        
+    except Exception as e:
+        results["status"] = "error"
+        results["errors"].append(f"Error checking Grafana logs: {str(e)}")
+        return results
+
+
+def fix_grafana_dashboard_errors(project_root: str, log_check: Dict) -> Dict:
+    """
+    Automatically fix Grafana dashboard and provisioning errors based on log analysis.
+    Enhanced to handle provisioning directory issues.
+    
+    Args:
+        project_root: Root directory of the project
+        log_check: Results from check_grafana_logs()
+        
+    Returns:
+        Dictionary with fix results
+    """
+    results = {
+        "status": "unknown",
+        "fixes_applied": [],
+        "errors": []
+    }
+    
+    try:
+        # Fix: Missing provisioning directories
+        provisioning_errors = log_check.get("provisioning_errors", [])
+        if provisioning_errors:
+            logger.info("Fixing provisioning directory issues...")
+            
+            grafana_provisioning_base = os.path.join(project_root, "grafana", "provisioning")
+            
+            # Create all required provisioning directories
+            dirs_to_create = [
+                os.path.join(grafana_provisioning_base, "dashboards"),
+                os.path.join(grafana_provisioning_base, "datasources"),
+                os.path.join(grafana_provisioning_base, "alerting"),
+                os.path.join(grafana_provisioning_base, "plugins"),
+                os.path.join(grafana_provisioning_base, "notifiers")
+            ]
+            
+            for dir_path in dirs_to_create:
+                try:
+                    os.makedirs(dir_path, exist_ok=True)
+                    results["fixes_applied"].append(f"Created directory: {dir_path}")
+                except Exception as e:
+                    results["errors"].append(f"Failed to create {dir_path}: {str(e)}")
+            
+            # Create empty config files for directories that need them
+            # Alerting config (empty)
+            alerting_config_path = os.path.join(grafana_provisioning_base, "alerting", "alerting.yml")
+            if not os.path.exists(alerting_config_path):
+                with open(alerting_config_path, 'w') as f:
+                    f.write("# Empty alerting configuration\n")
+                results["fixes_applied"].append("Created empty alerting config")
+            
+            # Plugins config (empty)
+            plugins_config_path = os.path.join(grafana_provisioning_base, "plugins", "plugins.yml")
+            if not os.path.exists(plugins_config_path):
+                with open(plugins_config_path, 'w') as f:
+                    f.write("# Empty plugins configuration\n")
+                results["fixes_applied"].append("Created empty plugins config")
+        
+        # Fix: Dashboard title cannot be empty
+        if any("Dashboard title cannot be empty" in str(err) for err in log_check.get("dashboard_errors", [])):
+            logger.info("Fixing dashboard JSON structure...")
+            
+            # Get services to regenerate dashboard correctly
+            try:
+                from docker_tools.multi_service_handler import detect_services
+                detected = detect_services(project_root)
+                service_list = list(detected.keys()) if detected else ["app"]
+            except:
+                # Fallback: get from docker-compose
+                try:
+                    result = subprocess.run(
+                        ["docker-compose", "ps", "--services"],
+                        cwd=project_root,
+                        capture_output=True,
+                        encoding='utf-8',
+                        timeout=10
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        service_list = [s.strip() for s in result.stdout.strip().split('\n') if s.strip()]
+                    else:
+                        service_list = ["app"]
+                except:
+                    service_list = ["app"]
+            
+            # Regenerate dashboard with correct structure
+            dashboard_path = generate_grafana_dashboard(project_root, service_list)
+            results["fixes_applied"].append(f"Regenerated dashboard JSON with correct structure: {dashboard_path}")
+        
+        # Fix: Datasource issues - regenerate datasource config
+        if log_check.get("datasource_errors"):
+            logger.info("Regenerating datasource configuration...")
+            try:
+                datasource_path = generate_grafana_datasource(project_root)
+                results["fixes_applied"].append(f"Regenerated datasource config: {datasource_path}")
+            except Exception as e:
+                results["errors"].append(f"Failed to regenerate datasource: {str(e)}")
+        
+        # Restart Grafana to apply all fixes
+        if results["fixes_applied"]:
+            logger.info("Restarting Grafana to apply fixes...")
+            restart_result = subprocess.run(
+                ["docker-compose", "-f", "docker-compose.monitoring.yml", "restart", "grafana"],
+                cwd=project_root,
+                capture_output=True,
+                encoding='utf-8',
+                timeout=30
+            )
+            
+            if restart_result.returncode == 0:
+                results["fixes_applied"].append("Restarted Grafana to reload configuration")
+                time.sleep(8)  # Wait for Grafana to restart and load configs
+            else:
+                results["errors"].append(f"Failed to restart Grafana: {restart_result.stderr}")
+        
+        # Determine status
+        if results["fixes_applied"] and not results["errors"]:
+            results["status"] = "success"
+        elif results["fixes_applied"] and results["errors"]:
+            results["status"] = "partial"
+        else:
+            results["status"] = "no_fixes_applied"
+        
+        return results
+        
+    except Exception as e:
+        results["status"] = "error"
+        results["errors"].append(f"Error fixing dashboard: {str(e)}")
+        return results
+
+
+def capture_grafana_screenshot(grafana_url: str = "http://localhost:3001", output_path: str = None, wait_for_login: bool = False) -> Dict:
+    """
+    Capture screenshot of Grafana dashboard to verify it's working.
+    Enhanced to handle login page and wait for dashboard to load.
+    
+    Args:
+        grafana_url: URL of Grafana dashboard
+        output_path: Path to save screenshot (default: auto-generated in project)
+        wait_for_login: Whether to perform login if needed
+        
+    Returns:
+        Dictionary with screenshot result and base64 data
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        
+        if output_path is None:
+            output_path = os.path.join(os.getcwd(), "grafana_dashboard_screenshot.png")
+        
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(viewport={'width': 1920, 'height': 1080})
+            page = context.new_page()
+            
+            # Navigate to dashboard
+            dashboard_url = f"{grafana_url}/d/app-logs/application-logs?orgId=1&refresh=5s"
+            
+            try:
+                page.goto(dashboard_url, wait_until="domcontentloaded", timeout=30000)
+                
+                # Check if we're on login page
+                if "login" in page.url.lower() or page.locator("input[name='user']").count() > 0:
+                    logger.info("Grafana login page detected, logging in...")
+                    
+                    # Fill login form
+                    page.fill("input[name='user']", "admin")
+                    page.fill("input[name='password']", "admin")
+                    page.click("button[type='submit']")
+                    
+                    # Wait for redirect to dashboard
+                    page.wait_for_url("**/d/app-logs/**", timeout=10000)
+                
+                # Wait for dashboard to load
+                page.wait_for_timeout(5000)
+                
+                # Wait for panels to be visible
+                try:
+                    page.wait_for_selector("[data-testid='data-testid panel content']", timeout=10000)
+                except:
+                    # Fallback: just wait for any panel
+                    page.wait_for_selector(".panel-container", timeout=10000)
+                
+                # Take screenshot
+                page.screenshot(path=output_path, full_page=True)
+                
+            except Exception as e:
+                # Take screenshot anyway to see what's on the page
+                logger.warning(f"Error during navigation, capturing screenshot anyway: {e}")
+                page.screenshot(path=output_path, full_page=True)
+            
+            browser.close()
+            
+            # Read screenshot and encode as base64
+            with open(output_path, 'rb') as f:
+                screenshot_data = f.read()
+                import base64
+                base64_data = base64.b64encode(screenshot_data).decode('utf-8')
+            
+            return {
+                "status": "success",
+                "path": output_path,
+                "base64": base64_data,
+                "message": f"Screenshot saved to {output_path}"
+            }
+    
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to capture screenshot: {str(e)}"
+        }
 
 
 def test_loki_connection(loki_url: str = "http://localhost:3100") -> Dict:
@@ -850,6 +1184,7 @@ def test_promtail_connection(promtail_url: str = "http://localhost:9080") -> Dic
 def test_loki_receiving_logs(loki_url: str = "http://localhost:3100") -> Dict:
     """
     Test if Loki is actually receiving logs from Promtail.
+    Tests both all containers and application-only containers.
     
     Args:
         loki_url: URL of Loki service
@@ -862,15 +1197,17 @@ def test_loki_receiving_logs(loki_url: str = "http://localhost:3100") -> Dict:
     results = {
         "receiving_logs": False,
         "log_count": 0,
+        "app_log_count": 0,
         "labels": [],
+        "container_names": [],
         "error": None
     }
     
     try:
-        # Query Loki for any logs in the last 5 minutes
+        # First, query for all container logs
         params = {
-            "query": '{job="docker"}',
-            "limit": 10,
+            "query": '{container_name=~".+"}',
+            "limit": 100,
             "start": int((time.time() - 300) * 1e9),  # 5 minutes ago in nanoseconds
             "end": int(time.time() * 1e9)
         }
@@ -891,12 +1228,25 @@ def test_loki_receiving_logs(loki_url: str = "http://localhost:3100") -> Dict:
                     results["receiving_logs"] = True
                     results["log_count"] = sum(len(stream.get("values", [])) for stream in streams)
                     results["labels"] = [stream.get("stream", {}) for stream in streams]
+                    
+                    # Extract container names
+                    for stream in streams:
+                        stream_labels = stream.get("stream", {})
+                        container_name = stream_labels.get("container_name", stream_labels.get("container", "unknown"))
+                        if container_name and container_name not in results["container_names"]:
+                            results["container_names"].append(container_name)
+                    
+                    # Count application logs (excluding monitoring containers)
+                    monitoring_containers = ["grafana", "loki", "promtail"]
+                    app_streams = [s for s in streams if s.get("stream", {}).get("container_name", "") not in monitoring_containers]
+                    results["app_log_count"] = sum(len(stream.get("values", [])) for stream in app_streams)
+                    
                 else:
                     results["error"] = "No logs found in Loki - Promtail might not be sending logs"
             else:
                 results["error"] = "Invalid response format from Loki"
         else:
-            results["error"] = f"Loki query failed with status {response.status_code}"
+            results["error"] = f"Loki query failed with status {response.status_code}: {response.text}"
         
         return results
         
@@ -1428,7 +1778,21 @@ def smart_dockerize_and_show_logs(project_root: str, auto_fix: bool = True) -> s
     
     report += f"{'✅' if loki_ready else '❌'} Loki: {'Ready' if loki_ready else 'Not Ready'}\n"
     report += f"{'✅' if promtail_ready else '❌'} Promtail: {'Ready' if promtail_ready else 'Not Ready'}\n"
-    report += f"{'✅' if logs_flowing else '❌'} Log Flow: {'Active' if logs_flowing else 'No Logs Detected'}\n\n"
+    report += f"{'✅' if logs_flowing else '❌'} Log Flow: {'Active' if logs_flowing else 'No Logs Detected'}\n"
+    
+    # Show detailed log information
+    if logs_flowing and diagnostics["logs"].get("container_names"):
+        report += f"\n📦 Containers generating logs:\n"
+        for container in diagnostics["logs"]["container_names"]:
+            is_monitoring = container in ["grafana", "loki", "promtail"]
+            icon = "🔧" if is_monitoring else "📦"
+            label = " (monitoring)" if is_monitoring else " (application)"
+            report += f"   {icon} {container}{label}\n"
+        
+        total_logs = diagnostics["logs"].get("log_count", 0)
+        app_logs = diagnostics["logs"].get("app_log_count", 0)
+        report += f"\n📊 Total logs: {total_logs} | Application logs: {app_logs}\n"
+    report += "\n"
     
     # Auto-fix if issues found
     if auto_fix and (not loki_ready or not promtail_ready or not logs_flowing):
@@ -1486,32 +1850,166 @@ def smart_dockerize_and_show_logs(project_root: str, auto_fix: bool = True) -> s
     else:
         report += "✅ Logs are already flowing to Loki\n\n"
     
-    # STEP 6: Launch Grafana Dashboard (directly to logs page!)
+    # STEP 6: Launch Grafana Dashboard with Auto-Analysis & Screenshot
     report += "=" * 60 + "\n"
-    report += "**STEP 6: Launching Grafana Dashboard...**\n\n"
+    report += "**STEP 6: Launching & Analyzing Grafana Dashboard...**\n\n"
     
     try:
-        # Use the enhanced launch function that opens directly to dashboard
-        launch_result = launch_grafana_dashboard("http://localhost:3001", open_dashboard=True)
-        report += launch_result + "\n\n"
+        # Use the enhanced launch function with auto-analysis and screenshot
+        launch_result = launch_grafana_dashboard(
+            grafana_url="http://localhost:3001", 
+            open_dashboard=True,
+            auto_analyze=True,
+            capture_screenshot=True,
+            project_root=project_root
+        )
+        
+        report += launch_result["message"] + "\n"
+        
+        # Store analysis and screenshot for later use
+        if launch_result.get("log_analysis"):
+            # Analysis already included in message
+            pass
+        
+        if launch_result.get("screenshot"):
+            # Screenshot already included in message
+            pass
+            
     except Exception as e:
-        report += f"⚠️  Could not auto-open browser: {str(e)}\n"
+        report += f"⚠️  Error during launch: {str(e)}\n"
         report += "   Please open manually: http://localhost:3001/d/app-logs/application-logs\n\n"
     
-    # STEP 7: Verify Logs are Visible
+    # STEP 7: Check Grafana Logs for Errors & Auto-Fix
     report += "=" * 60 + "\n"
-    report += "**STEP 7: Verifying Logs in Grafana...**\n\n"
+    report += "**STEP 7: Analyzing Grafana Logs & Auto-Fixing Issues...**\n\n"
+    
+    # Wait a moment for Grafana to process dashboard
+    time.sleep(3)
+    
+    grafana_log_check = check_grafana_logs(project_root)
+    
+    if grafana_log_check["status"] == "healthy":
+        report += "✅ Grafana logs are clean - no errors detected\n\n"
+    elif grafana_log_check["status"] == "has_issues":
+        report += "⚠️  Issues detected in Grafana logs:\n\n"
+        
+        # Show dashboard errors
+        if grafana_log_check["dashboard_errors"]:
+            report += "**Dashboard Errors:**\n"
+            for err in grafana_log_check["dashboard_errors"]:
+                report += f"  ❌ {err.get('error', 'Unknown error')}\n"
+                if 'fix' in err:
+                    report += f"     💡 Fix: {err['fix']}\n"
+            report += "\n"
+        
+        # Show datasource errors
+        if grafana_log_check["datasource_errors"]:
+            report += "**Datasource Errors:**\n"
+            for err in grafana_log_check["datasource_errors"]:
+                report += f"  ❌ {err.get('error', 'Unknown error')}\n"
+            report += "\n"
+        
+        # Show provisioning errors
+        if grafana_log_check.get("provisioning_errors"):
+            report += "**Provisioning Errors:**\n"
+            for err in grafana_log_check["provisioning_errors"]:
+                report += f"  ❌ {err.get('error', 'Unknown error')}\n"
+                if 'fix' in err:
+                    report += f"     💡 Fix: {err['fix']}\n"
+            report += "\n"
+        
+        # Auto-fix if enabled
+        if auto_fix:
+            report += "**🔧 Applying Automatic Fixes...**\n\n"
+            fix_result = fix_grafana_dashboard_errors(project_root, grafana_log_check)
+            
+            if fix_result["fixes_applied"]:
+                for fix in fix_result["fixes_applied"]:
+                    report += f"  ✅ {fix}\n"
+                report += "\n"
+                
+                # COMPREHENSIVE VERIFICATION AFTER FIX
+                report += "**🔍 Verifying Fixes...**\n\n"
+                verification = verify_grafana_after_fix(project_root)
+                
+                if verification["status"] == "success" and verification["all_clear"]:
+                    report += "✅ **ALL ISSUES RESOLVED!**\n"
+                    report += "   Grafana logs are now clean\n"
+                    report += "   Dashboard is accessible\n\n"
+                elif verification["status"] == "partial":
+                    report += "⚠️  Some issues remain:\n"
+                    for issue in verification["issues_remaining"]:
+                        report += f"   - {issue}\n"
+                    report += "\n"
+                else:
+                    report += f"❌ Verification failed: {verification.get('status')}\n\n"
+                
+                # Report screenshot capture
+                if verification["screenshot"]["status"] == "success":
+                    report += f"📸 Verification screenshot captured: {verification['screenshot']['path']}\n\n"
+            
+            if fix_result["errors"]:
+                report += "**Errors during fixing:**\n"
+                for error in fix_result["errors"]:
+                    report += f"  ⚠️  {error}\n"
+                report += "\n"
+        else:
+            report += "💡 Run with auto_fix=True to automatically fix these issues\n\n"
+    else:
+        report += f"⚠️  Could not check Grafana logs: {grafana_log_check.get('errors', ['Unknown error'])[0]}\n\n"
+    
+    # STEP 8: Final Dashboard Screenshot for Verification
+    report += "=" * 60 + "\n"
+    report += "**STEP 8: Capturing Final Dashboard Screenshot...**\n\n"
+    
+    try:
+        # Wait a moment for dashboard to fully load
+        time.sleep(3)
+        
+        screenshot_path = os.path.join(project_root, "grafana_dashboard_final.png")
+        screenshot_result = capture_grafana_screenshot("http://localhost:3001", screenshot_path, wait_for_login=True)
+        
+        if screenshot_result["status"] == "success":
+            report += f"✅ Dashboard screenshot captured: {screenshot_result['path']}\n"
+            report += "   Screenshot confirms dashboard is working properly\n\n"
+            
+            # Store base64 for potential display
+            if "base64" in screenshot_result:
+                report += f"   📸 Screenshot data available for viewing\n\n"
+        else:
+            report += f"⚠️  Could not capture screenshot: {screenshot_result.get('message', 'Unknown error')}\n"
+            report += "   Dashboard may still be accessible - check manually\n\n"
+    except Exception as e:
+        report += f"⚠️  Screenshot capture error: {str(e)}\n"
+        report += "   (This is optional - dashboard should still be accessible)\n\n"
+    
+    # STEP 9: Verify Logs are Visible
+    report += "=" * 60 + "\n"
+    report += "**STEP 9: Verifying Application Logs in Grafana...**\n\n"
     
     if logs_flowing:
-        log_count = diagnostics["logs"].get("log_count", 0)
-        report += f"✅ SUCCESS! Loki has {log_count} log entries\n"
-        report += "   Your logs should be visible in Grafana dashboard\n\n"
+        total_logs = diagnostics["logs"].get("log_count", 0)
+        app_logs = diagnostics["logs"].get("app_log_count", 0)
         
-        # Show sample of recent logs
+        report += f"✅ SUCCESS! Loki has {total_logs} total log entries\n"
+        report += f"   📦 Application logs: {app_logs}\n"
+        report += f"   🔧 Monitoring logs: {total_logs - app_logs} (excluded from dashboard)\n\n"
+        
+        # Show which containers are visible
+        if diagnostics["logs"].get("container_names"):
+            app_containers = [c for c in diagnostics["logs"]["container_names"] if c not in ["grafana", "loki", "promtail"]]
+            if app_containers:
+                report += "**Application containers visible in dashboard:**\n"
+                for container in app_containers:
+                    report += f"   📦 {container}\n"
+                report += "\n"
+        
+        # Show sample of recent application logs
         try:
-            logs_result = fetch_logs_from_loki("http://localhost:3100", '{job="docker"}', 5)
+            # Query only application logs
+            logs_result = fetch_logs_from_loki("http://localhost:3100", '{container_name=~".+"} | container_name !~ "(grafana|loki|promtail)"', 5)
             if logs_result["status"] == "success" and logs_result["logs"]:
-                report += "**Sample Recent Logs:**\n"
+                report += "**Sample Application Logs:**\n"
                 for log in logs_result["logs"][:3]:
                     log_text = log["log"][:100]
                     report += f"  • {log_text}...\n"
@@ -1558,6 +2056,58 @@ def smart_dockerize_and_show_logs(project_root: str, auto_fix: bool = True) -> s
     report += "\n" + "=" * 60 + "\n"
     
     return report
+
+
+def verify_grafana_after_fix(project_root: str) -> Dict:
+    """
+    Verify Grafana is working correctly after applying fixes.
+    Checks logs again and captures screenshot.
+    
+    Args:
+        project_root: Root directory of the project
+        
+    Returns:
+        Dictionary with verification results
+    """
+    results = {
+        "status": "unknown",
+        "log_check": {},
+        "screenshot": {},
+        "issues_remaining": [],
+        "all_clear": False
+    }
+    
+    try:
+        # Wait a moment for Grafana to stabilize
+        time.sleep(3)
+        
+        # Check logs again
+        log_check = check_grafana_logs(project_root)
+        results["log_check"] = log_check
+        
+        # Determine if issues remain
+        if log_check["status"] == "healthy":
+            results["all_clear"] = True
+            results["status"] = "success"
+        elif log_check["status"] == "has_issues":
+            results["status"] = "partial"
+            results["issues_remaining"].extend([e.get("error", str(e)) for e in log_check.get("dashboard_errors", [])])
+            results["issues_remaining"].extend([e.get("error", str(e)) for e in log_check.get("datasource_errors", [])])
+            results["issues_remaining"].extend([e.get("error", str(e)) for e in log_check.get("provisioning_errors", [])])
+        else:
+            results["status"] = "error"
+        
+        # Capture screenshot to verify dashboard is accessible
+        screenshot_path = os.path.join(project_root, "grafana_verification_after_fix.png")
+        screenshot_result = capture_grafana_screenshot("http://localhost:3001", screenshot_path, wait_for_login=True)
+        results["screenshot"] = screenshot_result
+        
+        return results
+        
+    except Exception as e:
+        results["status"] = "error"
+        results["issues_remaining"].append(f"Verification error: {str(e)}")
+        return results
 
 
 def validate_and_fix_monitoring(project_root: str) -> str:

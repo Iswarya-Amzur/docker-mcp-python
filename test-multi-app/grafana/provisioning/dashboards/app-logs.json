@@ -1,0 +1,75 @@
+{
+  "id": null,
+  "uid": "app-logs",
+  "title": "Application Logs",
+  "tags": [
+    "docker",
+    "logs"
+  ],
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {
+        "h": 24,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "type": "logs",
+      "title": "Application Container Logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "{container_name=~\".+\"} | container_name !~ \"(grafana|loki|promtail)\"",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false
+      }
+    }
+  ],
+  "schemaVersion": 38,
+  "version": 0,
+  "refresh": "5s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m"
+    ],
+    "time_options": [
+      "5m",
+      "15m",
+      "1h",
+      "6h",
+      "12h",
+      "24h",
+      "2d",
+      "7d"
+    ]
+  },
+  "editable": true,
+  "hideControls": false
+}
