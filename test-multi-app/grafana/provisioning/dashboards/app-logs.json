@@ -1,20 +1,188 @@
 {
   "id": null,
   "uid": "app-logs",
-  "title": "Application Logs",
+  "title": "Application Monitoring Dashboard",
   "tags": [
     "docker",
-    "logs"
+    "logs",
+    "metrics"
   ],
   "timezone": "browser",
   "panels": [
     {
       "id": 1,
       "gridPos": {
-        "h": 24,
-        "w": 24,
+        "h": 8,
+        "w": 12,
         "x": 0,
         "y": 0
+      },
+      "type": "graph",
+      "title": "Container CPU Usage (%)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(container_cpu_usage_seconds_total{name=~\".+\", name!~\"(grafana|loki|promtail|cadvisor|prometheus)\"}[5m]) * 100",
+          "refId": "A",
+          "legendFormat": "{{name}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "percent",
+          "label": "CPU Usage"
+        },
+        {
+          "format": "short"
+        }
+      ],
+      "legend": {
+        "show": true,
+        "alignAsTable": true,
+        "avg": true,
+        "current": true,
+        "max": true
+      }
+    },
+    {
+      "id": 2,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "type": "graph",
+      "title": "Container Memory Usage (MB)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "container_memory_usage_bytes{name=~\".+\", name!~\"(grafana|loki|promtail|cadvisor|prometheus)\"} / 1024 / 1024",
+          "refId": "A",
+          "legendFormat": "{{name}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "mbytes",
+          "label": "Memory"
+        },
+        {
+          "format": "short"
+        }
+      ],
+      "legend": {
+        "show": true,
+        "alignAsTable": true,
+        "avg": true,
+        "current": true,
+        "max": true
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "type": "graph",
+      "title": "Network I/O (KB/s)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(container_network_receive_bytes_total{name=~\".+\", name!~\"(grafana|loki|promtail|cadvisor|prometheus)\"}[5m]) / 1024",
+          "refId": "A",
+          "legendFormat": "{{name}} Receive",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "KBs",
+          "label": "Network Rate"
+        },
+        {
+          "format": "short"
+        }
+      ],
+      "legend": {
+        "show": true,
+        "alignAsTable": true,
+        "avg": true,
+        "current": true
+      }
+    },
+    {
+      "id": 4,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "type": "graph",
+      "title": "Container Disk Usage (MB)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "container_fs_usage_bytes{name=~\".+\", name!~\"(grafana|loki|promtail|cadvisor|prometheus)\"} / 1024 / 1024",
+          "refId": "A",
+          "legendFormat": "{{name}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "mbytes",
+          "label": "Disk Usage"
+        },
+        {
+          "format": "short"
+        }
+      ],
+      "legend": {
+        "show": true,
+        "alignAsTable": true,
+        "avg": true,
+        "current": true,
+        "max": true
+      }
+    },
+    {
+      "id": 5,
+      "gridPos": {
+        "h": 16,
+        "w": 24,
+        "x": 0,
+        "y": 16
       },
       "type": "logs",
       "title": "Application Container Logs",
@@ -24,7 +192,7 @@
       },
       "targets": [
         {
-          "expr": "{container_name=~\".+\"} | container_name !~ \"(grafana|loki|promtail)\"",
+          "expr": "{container_name=~\".+\"} | container_name !~ \"(grafana|loki|promtail|cadvisor|prometheus)\"",
           "refId": "A",
           "datasource": {
             "type": "loki",
