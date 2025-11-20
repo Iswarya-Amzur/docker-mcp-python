@@ -612,16 +612,44 @@ def comprehensive_dockerize_and_test(project_root: str,
             if start_result['status'] == 'success':
                 report += "✅ Containers built and started successfully\n\n"
                 
-                # Wait for services to be ready
-                report += "⏳ Waiting for services to be ready...\n"
+                # Detect ports from service analysis
                 backend_port = 8000
                 frontend_port = 3000
                 
-                for name in services.keys():
-                    if name.lower() in ['backend', 'api', 'server']:
-                        backend_port = 8000
-                    elif name.lower() in ['frontend', 'client', 'web']:
-                        frontend_port = 3000
+                detected_ports = {}
+                for name, service_info in services.items():
+                    # Try to get port from analysis dict or top-level
+                    analysis = service_info.get('analysis', {})
+                    detected_port = analysis.get('port') or service_info.get('port')
+                    
+                    if detected_port:
+                        detected_ports[name] = detected_port
+                        logger.info(f"Detected port {detected_port} for service '{name}'")
+                        
+                        # Categorize based on service name and type
+                        if name.lower() in ['backend', 'api', 'server'] or 'backend' in name.lower():
+                            backend_port = detected_port
+                            logger.info(f"Using port {detected_port} for backend (service: {name})")
+                        elif name.lower() in ['frontend', 'client', 'web', 'ui'] or 'frontend' in name.lower():
+                            frontend_port = detected_port
+                            logger.info(f"Using port {detected_port} for frontend (service: {name})")
+                        elif len(services) == 1:
+                            # Single service - use type to determine
+                            app_type = service_info.get('language', '').lower()
+                            if app_type in ['node', 'javascript', 'typescript']:
+                                frontend_port = detected_port
+                            else:
+                                backend_port = detected_port
+                
+                if detected_ports:
+                    report += f"🔍 **Detected Ports:**\n"
+                    for svc_name, port in detected_ports.items():
+                        report += f"   - {svc_name}: {port}\n"
+                    report += "\n"
+                
+                # Wait for services to be ready
+                report += "⏳ Waiting for services to be ready...\n"
+                logger.info(f"Waiting for services: backend={backend_port}, frontend={frontend_port}")
                 
                 wait_result = wait_for_services("localhost", backend_port, frontend_port, timeout=60)
                 

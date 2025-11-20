@@ -14,16 +14,16 @@ from typing import Optional
 
 
 def generate_dockerfile(app_path: str, analysis: dict = None, 
-                       python_version: str = "3.11",
-                       node_version: str = "20") -> str:
+                       python_version: str = None,
+                       node_version: str = None) -> str:
     """
     Generate optimized Dockerfile based on framework analysis.
     
     Args:
         app_path: Path to application
         analysis: Analysis result from analyzer (if not provided, will analyze)
-        python_version: Python version for Python apps
-        node_version: Node version for Node.js apps
+        python_version: Python version for Python apps (auto-detected if not provided)
+        node_version: Node version for Node.js apps (auto-detected if not provided)
         
     Returns:
         Dockerfile content as string
@@ -32,6 +32,17 @@ def generate_dockerfile(app_path: str, analysis: dict = None,
     if analysis is None:
         from .analyzer import analyze_application
         analysis = analyze_application(app_path)
+    
+    # Use detected language version from analysis, or provided version, or fallback to defaults
+    detected_version = analysis.get('language_version')
+    if not python_version and analysis.get('app_type') == 'python':
+        python_version = detected_version or "3.11"
+    if not node_version and analysis.get('app_type') == 'node':
+        node_version = detected_version or "20"
+    
+    # Ensure we have version values
+    python_version = python_version or "3.11"
+    node_version = node_version or "20"
     
     framework = (analysis.get('framework') or '').lower()
     app_type = (analysis.get('app_type') or '').lower()

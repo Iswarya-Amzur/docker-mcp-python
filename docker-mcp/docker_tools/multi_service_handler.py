@@ -168,22 +168,30 @@ class ProductionServiceDetector:
     
     def _scan_root_level(self):
         """Check if root directory is a single service."""
-        # First check if there are potential service subdirectories
-        service_dirs = []
-        if self.project_root.exists():
-            for item in self.project_root.iterdir():
-                if (item.is_dir() and 
-                    not item.name.startswith('.') and 
-                    item.name not in ['node_modules', '__pycache__', 'venv', '.git']):
-                    # Check if it looks like a service directory
-                    if any(term in item.name.lower() for term in 
-                           ['frontend', 'backend', 'client', 'server', 'api', 'web', 'app', 'service']):
-                        service_dirs.append(item)
+        # SKIP docker-mcp tool directory itself to prevent self-dockerization
+        root_name = self.project_root.name.lower()
+        if 'docker-mcp' in root_name or 'docker_mcp' in root_name:
+            return
         
-        # Only treat root as a service if no service subdirectories exist
-        if not service_dirs:
-            analysis = analyze_application(str(self.project_root))
-            if analysis.get('app_type') and analysis['app_type'] != 'unknown':
+        # Check if root itself is a service (single-service projects)
+        # But don't let this block nested service detection
+        analysis = analyze_application(str(self.project_root))
+        if analysis.get('app_type') and analysis['app_type'] != 'unknown':
+            # Check if there are ANY subdirectories that might be services
+            has_nested_services = False
+            if self.project_root.exists():
+                for item in self.project_root.iterdir():
+                    if (item.is_dir() and 
+                        not item.name.startswith('.') and 
+                        item.name not in ['node_modules', '__pycache__', 'venv', '.git']):
+                        # Check if subdirectory is also a service
+                        sub_analysis = analyze_application(str(item))
+                        if sub_analysis.get('app_type') and sub_analysis['app_type'] != 'unknown':
+                            has_nested_services = True
+                            break
+            
+            # Only treat root as THE service if no nested services exist
+            if not has_nested_services:
                 self.services['app'] = {
                     'path': str(self.project_root),
                     'type': 'application',
@@ -227,37 +235,54 @@ class ProductionServiceDetector:
                             }
     
     def _scan_deep_scan(self):
-        """Deep recursive scan for nested services (max 3 levels)."""
-        def scan_recursive(path: Path, depth: int = 0, max_depth: int = 3):
+        """Deep recursive scan for nested services - ALWAYS runs to find all services."""
+        def scan_recursive(path: Path, depth: int = 0, max_depth: int = 5):
             if depth > max_depth or not path.exists():
                 return
                 
             for item in path.iterdir():
-                if item.is_dir() and not item.name.startswith('.') and item.name not in ['node_modules', '__pycache__', '.git']:
+                # Skip common non-service directories
+                if item.is_dir() and not item.name.startswith('.'):
+                    skip_dirs = ['node_modules', '__pycache__', '.git', 'venv', 'env', '.venv', 
+                                 'dist', 'build', '.next', '.nuxt', 'coverage', '.pytest_cache']
+                    if item.name in skip_dirs:
+                        continue
+                    
+                    # Skip docker-mcp directories
+                    if 'docker-mcp' in item.name.lower() or 'docker_mcp' in item.name.lower():
+                        continue
+                    
                     # Check if this directory is a service
                     analysis = analyze_application(str(item))
                     if analysis.get('app_type') and analysis['app_type'] != 'unknown':
                         relative_path = item.relative_to(self.project_root)
-                        service_key = str(relative_path).replace('/', '-').replace('\\\\', '-')
+                        service_key = str(relative_path).replace('/', '-').replace('\\\\', '-').replace('\\', '-')
                         
-                        self.services[service_key] = {
-                            'path': str(item),
-                            'type': 'application',
-                            'category': 'nested_service',
-                            'framework': analysis.get('framework', 'unknown'),
-                            'language': analysis['app_type'],
-                            'analysis': analysis,
-                            'detection_method': 'deep_scan',
-                            'nesting_level': depth + 1
-                        }
-                    else:
-                        # Continue scanning deeper
-                        scan_recursive(item, depth + 1, max_depth)
+                        # Only add if not already detected
+                        if service_key not in self.services:
+                            self.services[service_key] = {
+                                'path': str(item),
+                                'type': 'application',
+                                'category': 'nested_service',
+                                'framework': analysis.get('framework', 'unknown'),
+                                'language': analysis['app_type'],
+                                'analysis': analysis,
+                                'detection_method': 'deep_scan',
+                                'nesting_level': depth + 1
+                            }
+                    
+                    # ALWAYS continue scanning deeper - services can be nested inside services
+                    scan_recursive(item, depth + 1, max_depth)
         
         scan_recursive(self.project_root)
     
     def _analyze_potential_service(self, service_path: Path):
         """Analyze a directory to determine if it's a service."""
+        # SKIP docker-mcp tool directory and subdirectories
+        path_name = service_path.name.lower()
+        if 'docker-mcp' in path_name or 'docker_mcp' in path_name or path_name == 'docker_tools':
+            return
+        
         analysis = analyze_application(str(service_path))
         
         if analysis.get('app_type') and analysis['app_type'] != 'unknown':
@@ -627,6 +652,99 @@ class ProductionServiceDetector:
 
 
 # Keep original functions for backward compatibility
+def cleanup_containers(project_root: str) -> dict:
+    """
+    Stop and remove all running containers to avoid port conflicts.
+    This ensures a clean slate before building new containers.
+    
+    Args:
+        project_root: Root directory containing docker-compose.yml
+        
+    Returns:
+        Dictionary with cleanup status and details
+    """
+    import subprocess
+    
+    result_info = {
+        "status": "success",
+        "stopped_containers": [],
+        "removed_containers": [],
+        "errors": []
+    }
+    
+    try:
+        # First, try to stop docker-compose services if docker-compose.yml exists
+        compose_path = os.path.join(project_root, 'docker-compose.yml')
+        if os.path.exists(compose_path):
+            stop_result = subprocess.run(
+                ["docker-compose", "down", "-v"],
+                cwd=project_root,
+                capture_output=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=60
+            )
+            if stop_result.returncode == 0:
+                result_info["stopped_containers"].append("docker-compose services")
+            else:
+                result_info["errors"].append(f"docker-compose down: {stop_result.stderr}")
+        
+        # Also stop any running containers that might conflict
+        ps_result = subprocess.run(
+            ["docker", "ps", "-q"],
+            capture_output=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=30
+        )
+        
+        if ps_result.returncode == 0 and ps_result.stdout.strip():
+            container_ids = ps_result.stdout.strip().split('\n')
+            for container_id in container_ids:
+                if container_id:
+                    # Get container name
+                    name_result = subprocess.run(
+                        ["docker", "inspect", "--format", "{{.Name}}", container_id],
+                        capture_output=True,
+                        encoding='utf-8',
+                        errors='replace'
+                    )
+                    container_name = name_result.stdout.strip().lstrip('/')
+                    
+                    # Skip monitoring containers (loki, promtail, grafana)
+                    if any(mon in container_name.lower() for mon in ['loki', 'promtail', 'grafana', 'prometheus']):
+                        continue
+                    
+                    # Stop container
+                    stop_result = subprocess.run(
+                        ["docker", "stop", container_id],
+                        capture_output=True,
+                        encoding='utf-8',
+                        errors='replace',
+                        timeout=30
+                    )
+                    if stop_result.returncode == 0:
+                        result_info["stopped_containers"].append(container_name)
+                    
+                    # Remove container
+                    rm_result = subprocess.run(
+                        ["docker", "rm", container_id],
+                        capture_output=True,
+                        encoding='utf-8',
+                        errors='replace',
+                        timeout=30
+                    )
+                    if rm_result.returncode == 0:
+                        result_info["removed_containers"].append(container_name)
+        
+        return result_info
+        
+    except Exception as e:
+        result_info["status"] = "error"
+        result_info["errors"].append(str(e))
+        return result_info
+
+
 def generate_dockerfiles_for_services(services: dict) -> dict:
     """
     Generate Dockerfiles for all detected services.
@@ -641,6 +759,24 @@ def generate_dockerfiles_for_services(services: dict) -> dict:
     
     for service_name, service_info in services.items():
         service_path = service_info['path']
+        
+        # SAFETY CHECK: Prevent Dockerfile creation in problematic locations
+        path_lower = service_path.lower()
+        if any(skip in path_lower for skip in ['docker-mcp', 'docker_mcp', '.git', 'node_modules', '__pycache__']):
+            dockerfiles[service_name] = {
+                'status': 'skipped',
+                'reason': f'Skipped docker-mcp tool directory: {service_path}'
+            }
+            continue
+        
+        # Check if this is a root directory without actual application code
+        if not _has_application_files(service_path):
+            dockerfiles[service_name] = {
+                'status': 'skipped',
+                'reason': f'No application files found in: {service_path}'
+            }
+            continue
+        
         # Create analysis dict for dockerfile generation
         analysis = service_info.get('analysis', {})
         if not analysis:
@@ -675,9 +811,84 @@ def generate_dockerfiles_for_services(services: dict) -> dict:
     return dockerfiles
 
 
+def _has_application_files(path: str) -> bool:
+    """
+    Check if directory contains actual application files.
+    Prevents Dockerfile creation in empty or tool directories.
+    """
+    import os
+    from pathlib import Path
+    
+    path_obj = Path(path)
+    if not path_obj.exists():
+        return False
+    
+    # Check for common application indicators
+    app_indicators = [
+        # Python
+        'requirements.txt', 'setup.py', 'pyproject.toml', 'app.py', 'main.py', 'manage.py',
+        # Node.js
+        'package.json', 'index.js', 'server.js', 'app.js', 'index.ts',
+        # Frontend
+        'index.html', 'App.jsx', 'App.tsx', 'main.jsx',
+        # Go
+        'go.mod', 'main.go',
+        # Java
+        'pom.xml', 'build.gradle',
+    ]
+    
+    for indicator in app_indicators:
+        if (path_obj / indicator).exists():
+            return True
+    
+    # Check for src directory with files
+    src_dir = path_obj / 'src'
+    if src_dir.exists() and src_dir.is_dir():
+        if any(src_dir.iterdir()):
+            return True
+    
+    return False
+
+
+def validate_docker_names(services: dict) -> list:
+    """
+    Validate Docker service names comply with Docker naming requirements.
+    Docker requires:
+    - Lowercase letters, digits, and separators (., -, _)
+    - Must not start or end with a separator
+    
+    Args:
+        services: Dictionary of services from detect_services()
+        
+    Returns:
+        List of validation errors (empty if all valid)
+    """
+    import re
+    errors = []
+    
+    # Docker naming pattern: lowercase letters, digits, dots, hyphens, underscores
+    valid_pattern = re.compile(r'^[a-z0-9][a-z0-9._-]*$')
+    
+    for service_name in services.keys():
+        # Check if name contains uppercase or invalid characters
+        if not valid_pattern.match(service_name.lower().replace('_', '-').replace(' ', '-')):
+            errors.append(f"Service '{service_name}' contains invalid characters for Docker")
+        
+        # Check for uppercase letters
+        if any(c.isupper() for c in service_name):
+            errors.append(f"Service '{service_name}' contains uppercase letters (will be converted to lowercase)")
+    
+    return errors
+
+
 def generate_docker_compose(project_root: str, services: dict) -> str:
     """
     Generate a unified docker-compose.yml for all services.
+    
+    Docker naming requirements enforced:
+    - All service names converted to lowercase
+    - Spaces and underscores replaced with hyphens
+    - Container names follow same pattern
     
     Args:
         project_root: Root directory of the project
@@ -704,6 +915,9 @@ def generate_docker_compose(project_root: str, services: dict) -> str:
     used_ports = set()
     
     for service_name, service_info in services.items():
+        # ENFORCE LOWERCASE: Docker requires lowercase image and container names
+        service_name_lower = service_name.lower().replace('_', '-').replace(' ', '-')
+        
         service_type = service_info.get('framework', service_info.get('type', 'unknown'))
         
         # Use port from analysis if available, otherwise use framework-based defaults
@@ -756,11 +970,11 @@ def generate_docker_compose(project_root: str, services: dict) -> str:
                 # Fallback if path calculation fails
                 build_context = f'./{service_name}'
         
-        compose_content += f"""  {service_name}:
+        compose_content += f"""  {service_name_lower}:
     build:
       context: {build_context}
       dockerfile: Dockerfile
-    container_name: {service_name}-container
+    container_name: {service_name_lower}-container
     ports:
       - "{host_port}:{container_port}"
 """
@@ -782,14 +996,14 @@ def generate_docker_compose(project_root: str, services: dict) -> str:
             backend_service = None
             for svc in services.keys():
                 if svc.lower() in ['backend', 'api', 'server']:
-                    backend_service = svc
+                    backend_service = svc.lower().replace('_', '-').replace(' ', '-')
                     break
             
             if backend_service:
                 compose_content += f"""    environment:
-      - REACT_APP_API_URL=http://localhost:{port_mappings.get(backend_service.lower(), 8000)}
-      - VITE_API_URL=http://localhost:{port_mappings.get(backend_service.lower(), 8000)}
-      - NEXT_PUBLIC_API_URL=http://localhost:{port_mappings.get(backend_service.lower(), 8000)}
+      - REACT_APP_API_URL=http://localhost:{port_mappings.get(service_name.lower(), 8000)}
+      - VITE_API_URL=http://localhost:{port_mappings.get(service_name.lower(), 8000)}
+      - NEXT_PUBLIC_API_URL=http://localhost:{port_mappings.get(service_name.lower(), 8000)}
     depends_on:
       - {backend_service}
 """
@@ -896,20 +1110,40 @@ def dockerize_full_project(project_root: str, auto_start: bool = True) -> str:
         for name, info in infra_services.items():
             result += f"  - {name}: {info.get('category', 'unknown')}\n"
     
-    # Step 2: Generate Dockerfiles
-    result += "\n**Step 2: Generating Dockerfiles...**\n"
+    # Step 2: Validate Docker naming requirements
+    result += "\n**Step 2: Validating Docker Names...**\n"
+    naming_errors = validate_docker_names(services)
+    if naming_errors:
+        result += "⚠️  Docker naming issues detected (will auto-fix):\n"
+        for error in naming_errors:
+            result += f"   - {error}\n"
+        result += "   ✅ Names will be automatically converted to lowercase\n"
+    else:
+        result += "✅ All service names are Docker-compliant\n"
+    
+    # Step 3: Generate Dockerfiles
+    result += "\n**Step 3: Generating Dockerfiles...**\n"
     dockerfiles = generate_dockerfiles_for_services(services)
     
     dockerfile_success = True
+    dockerfiles_updated = False
+    skipped_count = 0
     for name, info in dockerfiles.items():
         if info['status'] == 'success':
             result += f"✅ {name}: Dockerfile created at {info['path']}\n"
+            dockerfiles_updated = True
+        elif info['status'] == 'skipped':
+            result += f"⏭️  {name}: {info['reason']}\n"
+            skipped_count += 1
         else:
             result += f"❌ {name}: {info['error']}\n"
             dockerfile_success = False
     
-    # Step 3: Generate docker-compose.yml
-    result += "\n**Step 3: Generating docker-compose.yml...**\n"
+    if skipped_count > 0:
+        result += f"ℹ️  Skipped {skipped_count} service(s) - not valid application directories\n"
+    
+    # Step 4: Generate docker-compose.yml
+    result += "\n**Step 4: Generating docker-compose.yml...**\n"
     compose_content = generate_docker_compose(project_root, services)
     
     # Verify docker-compose.yml was actually created
@@ -923,9 +1157,26 @@ def dockerize_full_project(project_root: str, auto_start: bool = True) -> str:
             result += f"❌ docker-compose.yml creation failed - file not found at {compose_path}\n"
         dockerfile_success = False
     
-    # Step 4: Build and start containers (if requested and no errors)
+    # Step 5: Cleanup existing containers to avoid port conflicts
     if auto_start and dockerfile_success:
-        result += "\n**Step 4: Building and Starting Containers...**\n"
+        result += "\n**Step 5: Cleaning Up Existing Containers...**\n"
+        cleanup_result = cleanup_containers(project_root)
+        
+        if cleanup_result["stopped_containers"]:
+            result += f"✅ Stopped containers: {', '.join(cleanup_result['stopped_containers'])}\n"
+        if cleanup_result["removed_containers"]:
+            result += f"✅ Removed containers: {', '.join(cleanup_result['removed_containers'])}\n"
+        if cleanup_result["errors"]:
+            for error in cleanup_result["errors"]:
+                result += f"⚠️  Cleanup warning: {error}\n"
+        if not cleanup_result["stopped_containers"] and not cleanup_result["removed_containers"]:
+            result += "✅ No existing containers to clean up\n"
+    
+    # Step 6: Build and start containers (if requested and no errors)
+    if auto_start and dockerfile_success:
+        result += "\n**Step 6: Building and Starting Containers...**\n"
+        if dockerfiles_updated:
+            result += "🔄 Dockerfiles were updated - rebuilding images...\n"
         result += "⏳ This may take a few minutes on first build...\n\n"
         
         try:
@@ -948,7 +1199,7 @@ def dockerize_full_project(project_root: str, auto_start: bool = True) -> str:
                 result += "✅ Containers built and started successfully!\n\n"
                 
                 # Wait for services to be ready
-                result += "**Step 5: Waiting for Services to be Ready...**\n"
+                result += "**Step 7: Waiting for Services to be Ready...**\n"
                 
                 # Determine ports from services analysis
                 backend_port = 8000

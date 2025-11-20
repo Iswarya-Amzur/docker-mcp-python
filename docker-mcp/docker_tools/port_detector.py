@@ -37,7 +37,7 @@ def detect_ports_in_code(app_path: str, framework: str = None) -> Dict:
             detected_ports.update(_detect_fastapi_ports(app_path))
         elif framework_lower in ['express', 'nestjs', 'node']:
             detected_ports.update(_detect_node_ports(app_path))
-        elif framework_lower in ['react', 'vue', 'angular', 'next']:
+        elif framework_lower in ['react', 'vue', 'angular', 'next', 'vite', 'svelte', 'gatsby', 'nuxt']:
             detected_ports.update(_detect_frontend_ports(app_path))
     
     # Generic port detection as fallback
@@ -235,9 +235,51 @@ def _detect_frontend_ports(app_path: Path) -> Dict:
     return ports
 
 
+def _detect_env_file_ports(app_path: Path) -> Dict:
+    """Detect ports from .env files."""
+    ports = {}
+    
+    # Check for .env files
+    env_files = ['.env', '.env.local', '.env.development', '.env.production']
+    
+    for env_file in env_files:
+        env_path = app_path / env_file
+        if env_path.exists() and env_path.is_file():
+            try:
+                with open(env_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    for line in f:
+                        line = line.strip()
+                        # Skip comments and empty lines
+                        if not line or line.startswith('#'):
+                            continue
+                        
+                        # Match PORT=3000 or VITE_PORT=5173, etc.
+                        if '=' in line:
+                            key, value = line.split('=', 1)
+                            key = key.strip()
+                            value = value.strip().strip('"\'')
+                            
+                            # Check if key contains 'PORT'
+                            if 'PORT' in key.upper() and value.isdigit():
+                                port = int(value)
+                                if 1000 <= port <= 65535:
+                                    ports[port] = {
+                                        'confidence': 30,  # High confidence for .env files
+                                        'source': f'.env:{key}'
+                                    }
+            except Exception:
+                pass
+    
+    return ports
+
+
 def _detect_generic_ports(app_path: Path) -> Dict:
     """Generic port detection across all files."""
     ports = {}
+    
+    # First, check .env files (highest priority)
+    env_ports = _detect_env_file_ports(app_path)
+    ports.update(env_ports)
     
     # Common port patterns
     patterns = [
@@ -324,6 +366,7 @@ def get_default_port_for_framework(framework: str) -> int:
         'next': 3000,
         'nuxt': 3000,
         'gatsby': 8000,
+        'vite': 5173,  # Vite default dev server port
         'spring-boot': 8080,
         'quarkus': 8080,
         'rails': 3000,
@@ -331,7 +374,7 @@ def get_default_port_for_framework(framework: str) -> int:
         'aspnetcore': 5000,
     }
     
-    return defaults.get(framework.lower() if framework else '', 8000)
+    return defaults.get(framework.lower() if framework else '', 3000)
 
 
 def detect_port_with_fallback(app_path: str, framework: str = None) -> int:

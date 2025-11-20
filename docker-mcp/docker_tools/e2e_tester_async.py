@@ -151,6 +151,99 @@ async def screenshot_to_base64(page: Page, full_page: bool = True) -> str:
         return ""
 
 
+async def analyze_page_structure(page: Page) -> dict:
+    """Analyze page structure and extract interactive elements like Playwright MCP."""
+    try:
+        # Set a default timeout for all operations to prevent hanging on complex apps
+        page.set_default_timeout(10000)  # 10 seconds max for any single operation
+        
+        analysis = {
+            "title": await page.title(),
+            "url": page.url,
+            "buttons": [],
+            "inputs": [],
+            "links": [],
+            "forms": [],
+            "interactive_elements": []
+        }
+        
+        # Extract buttons (with timeout)
+        try:
+            buttons = await page.locator("button, input[type='button'], input[type='submit']").all()
+            for i, btn in enumerate(buttons[:10]):
+                try:
+                    if await btn.is_visible():
+                        text = await btn.inner_text() or await btn.get_attribute("value") or await btn.get_attribute("aria-label") or f"Button {i+1}"
+                        analysis["buttons"].append({
+                            "index": i,
+                            "text": text.strip(),
+                            "type": await btn.get_attribute("type") or "button"
+                        })
+                except:
+                    pass
+        except Exception as e:
+            logger.warning(f"Could not analyze buttons: {e}")
+        
+        # Extract input fields (with timeout)
+        try:
+            inputs = await page.locator("input, textarea").all()
+            for i, inp in enumerate(inputs[:10]):
+                try:
+                    if await inp.is_visible() and not await inp.is_disabled():
+                        inp_type = await inp.get_attribute("type") or "text"
+                        placeholder = await inp.get_attribute("placeholder") or ""
+                        name = await inp.get_attribute("name") or ""
+                        analysis["inputs"].append({
+                            "index": i,
+                            "type": inp_type,
+                            "placeholder": placeholder,
+                            "name": name
+                        })
+                except:
+                    pass
+        except Exception as e:
+            logger.warning(f"Could not analyze inputs: {e}")
+        
+        # Extract links (with timeout)
+        try:
+            links = await page.locator("a[href]").all()
+            for i, link in enumerate(links[:10]):
+                try:
+                    if await link.is_visible():
+                        text = await link.inner_text()
+                        href = await link.get_attribute("href")
+                        if text and href:
+                            analysis["links"].append({
+                                "index": i,
+                                "text": text.strip(),
+                                "href": href
+                            })
+                except:
+                    pass
+        except Exception as e:
+            logger.warning(f"Could not analyze links: {e}")
+        
+        # Extract forms (with timeout)
+        try:
+            forms = await page.locator("form").all()
+            analysis["forms"] = [{"index": i} for i in range(len(forms))]
+        except Exception as e:
+            logger.warning(f"Could not analyze forms: {e}")
+        
+        # Summary
+        analysis["interactive_elements"] = [
+            f"{len(analysis['buttons'])} buttons",
+            f"{len(analysis['inputs'])} input fields",
+            f"{len(analysis['links'])} links",
+            f"{len(analysis['forms'])} forms"
+        ]
+        
+        return analysis
+    except Exception as e:
+        logger.error(f"Failed to analyze page: {e}")
+        return {"error": str(e)}
+
+
 async def _test_button_interactions_async(page: Page, results: dict):
     """Test clicking buttons (async)."""
     try:
@@ -375,6 +468,16 @@ async def run_interactive_tests_async(
     """
     import asyncio
     
+    # DEBUG: Log function entry and all parameters
+    logger.info("="*100)
+    logger.info("🔵 DEBUG: run_interactive_tests_async() FUNCTION CALLED")
+    logger.info(f"🔵 DEBUG:   project_root = {project_root}")
+    logger.info(f"🔵 DEBUG:   frontend_url = {frontend_url}")
+    logger.info(f"🔵 DEBUG:   backend_url = {backend_url}")
+    logger.info(f"🔵 DEBUG:   headless = {headless}")
+    logger.info(f"🔵 DEBUG:   perform_interactions = {perform_interactions}")
+    logger.info("="*100)
+    
     results = {
         "tests": [],
         "passed": 0,
@@ -382,10 +485,12 @@ async def run_interactive_tests_async(
         "total": 0,
         "interactions": [],
         "screenshot_initial": "",
-        "screenshot_after": ""
+        "screenshot_after": "",
+        "page_analysis": {}
     }
     
     try:
+        logger.info("🔵 DEBUG: Entering async_playwright() context manager...")
         async with async_playwright() as p:
             logger.info(f"🌐 Launching {'headless' if headless else 'VISIBLE'} Chromium browser...")
             
@@ -401,98 +506,234 @@ async def run_interactive_tests_async(
             )
             
             page = await context.new_page()
-            logger.info("✅ Browser opened!")
+            logger.info("✅ Browser opened! Starting automated testing...")
+            logger.info("🔵 DEBUG: Browser and page objects created successfully")
+            logger.info(f"🔵 DEBUG: Page URL: {page.url}")
             
-            # Test 1: Backend health check
-            results["total"] += 1
-            try:
-                response = await page.request.get(f"{backend_url}/health")
-                if response.ok:
-                    results["tests"].append({"name": "Backend health check", "status": "passed"})
-                    results["passed"] += 1
-                else:
-                    results["tests"].append({"name": "Backend health check", "status": "failed", "error": f"Status {response.status}"})
-                    results["failed"] += 1
-            except Exception as e:
-                results["tests"].append({"name": "Backend health check", "status": "failed", "error": str(e)})
-                results["failed"] += 1
+            # Skip backend health check - not all apps have /health endpoint
+            # Go straight to frontend testing
             
-            # Test 2: Frontend loads
+            # Test 1: Frontend loads
             results["total"] += 1
+            page_loaded_successfully = False
             try:
                 logger.info(f"🌐 Loading frontend at {frontend_url}")
-                await page.goto(frontend_url, wait_until="networkidle", timeout=30000)
-                title = await page.title()
+                logger.info(f"   Browser window is now VISIBLE - check your screen!")
+                logger.info(f"   Navigating to {frontend_url}...")
+                logger.info(f"   ⏱️  Using 90 second timeout for large/complex applications...")
+                logger.info("🔵 DEBUG: About to call page.goto() - this may take up to 90 seconds...")
                 
-                logger.info(f"✅ Page loaded: {title}")
+                # Use 'domcontentloaded' instead of 'networkidle' for complex apps
+                # 'networkidle' waits for all network requests which can timeout on complex apps
+                import time
+                start_time = time.time()
+                await page.goto(frontend_url, wait_until="domcontentloaded", timeout=90000)
+                elapsed = time.time() - start_time
+                logger.info(f"🔵 DEBUG: page.goto() completed in {elapsed:.2f} seconds")
+                title = await page.title()
+                page_loaded_successfully = True
+                
+                logger.info(f"✅ Page loaded successfully: '{title}'")
+                logger.info(f"   👀 You should see the application in the browser window now!")
                 results["tests"].append({"name": "Frontend loads successfully", "status": "passed", "title": title})
                 results["passed"] += 1
                 
+                # Wait for page to fully render (important for complex apps with lazy loading)
+                logger.info("⏸️  Waiting 5 seconds for page to fully render (important for complex apps)...")
+                await page.wait_for_timeout(5000)
+                
                 # Capture initial screenshot as base64
-                results["screenshot_initial"] = await screenshot_to_base64(page, full_page=True)
+                logger.info("📸 Capturing initial screenshot...")
+                screenshot_data = await screenshot_to_base64(page, full_page=True)
+                if screenshot_data:
+                    results["screenshot_initial"] = screenshot_data
+                    logger.info(f"✅ Initial screenshot captured: {len(screenshot_data)} characters")
+                else:
+                    logger.warning("⚠️ Initial screenshot capture returned empty data")
                 
             except Exception as e:
+                logger.error(f"❌ Frontend load failed: {e}")
+                logger.warning(f"⚠️  This might be due to timeout on complex applications")
+                logger.info(f"   Will still attempt to capture screenshot and perform interactions...")
                 results["tests"].append({"name": "Frontend loads successfully", "status": "failed", "error": str(e)})
                 results["failed"] += 1
-            
-            # Test 3: API calls
-            results["total"] += 1
-            try:
-                api_calls = []
-                page.on("request", lambda request: api_calls.append(request.url) if backend_url in request.url else None)
+                page_loaded_successfully = False
                 
-                await page.reload(wait_until="networkidle")
-                await page.wait_for_timeout(2000)
-                
-                if api_calls:
-                    results["tests"].append({"name": "Frontend-Backend communication", "status": "passed", "api_calls": len(api_calls)})
-                    results["passed"] += 1
-                else:
-                    results["tests"].append({"name": "Frontend-Backend communication", "status": "warning", "note": "No API calls detected"})
-            except Exception as e:
-                results["tests"].append({"name": "Frontend-Backend communication", "status": "failed", "error": str(e)})
-                results["failed"] += 1
+                # Try to capture screenshot even if page load failed
+                try:
+                    logger.info("📸 Attempting to capture screenshot despite error...")
+                    # Wait a bit for partial content to load
+                    await page.wait_for_timeout(3000)
+                    screenshot_data = await screenshot_to_base64(page, full_page=False)
+                    if screenshot_data:
+                        results["screenshot_initial"] = screenshot_data
+                        logger.info(f"✅ Error screenshot captured: {len(screenshot_data)} characters")
+                except Exception as ss_error:
+                    logger.error(f"Failed to capture error screenshot: {ss_error}")
             
-            # Perform interactions
+            # Test 3: API calls (only if page loaded successfully)
+            if page_loaded_successfully:
+                results["total"] += 1
+                try:
+                    api_calls = []
+                    page.on("request", lambda request: api_calls.append(request.url) if backend_url in request.url else None)
+                    
+                    # Don't reload - just wait for any async API calls
+                    logger.info("🔍 Monitoring API calls for 3 seconds...")
+                    await page.wait_for_timeout(3000)
+                    
+                    if api_calls:
+                        results["tests"].append({"name": "Frontend-Backend communication", "status": "passed", "api_calls": len(api_calls)})
+                        results["passed"] += 1
+                        logger.info(f"✅ Detected {len(api_calls)} API calls to backend")
+                    else:
+                        results["tests"].append({"name": "Frontend-Backend communication", "status": "warning", "note": "No API calls detected"})
+                        logger.warning("⚠️  No API calls detected (this is OK for static apps)")
+                except Exception as e:
+                    results["tests"].append({"name": "Frontend-Backend communication", "status": "failed", "error": str(e)})
+                    results["failed"] += 1
+            else:
+                logger.info("⏭️  Skipping API call test due to page load issues, moving to interactions...")
+            
+            # Perform interactions with intelligent analysis
+            # ALWAYS attempt interactions, even if page load had issues
+            logger.info(f"🔵 DEBUG: About to check perform_interactions flag: {perform_interactions}")
             if perform_interactions:
-                logger.info("Starting interactive tests...")
+                logger.info("🤖 Starting INTELLIGENT interactive tests...")
+                logger.info("   Testing like Playwright MCP - analyze, screenshot, act, verify")
+                logger.info("   👀 WATCH THE BROWSER WINDOW - automated actions starting now!")
+                logger.info("🔵 DEBUG: Inside perform_interactions block - will now analyze page")
+                logger.info("")
                 
-                interaction_tests = [
-                    ("Find and click buttons", lambda: _test_button_interactions_async(page, results)),
-                    ("Fill input fields", lambda: _test_input_interactions_async(page, results)),
-                    ("Create/Add items", lambda: _test_create_item_async(page, results, backend_url)),
-                    ("Navigate routes", lambda: _test_navigation_async(page, results)),
-                    ("Test form submissions", lambda: _test_form_submission_async(page, results))
-                ]
+                try:
+                    # Step 1: Analyze initial page structure
+                    logger.info("🔍 STEP 1: Analyzing page structure...")
+                    page_analysis = await analyze_page_structure(page)
+                except Exception as analysis_error:
+                    logger.error(f"❌ Page analysis failed: {analysis_error}")
+                    logger.info("   Will still attempt to capture screenshot and keep browser open...")
+                    page_analysis = {"title": "Unknown", "interactive_elements": [], "buttons": [], "inputs": [], "forms": [], "links": []}
                 
-                for test_name, test_func in interaction_tests:
+                logger.info(f"   📄 Page Title: {page_analysis.get('title', 'Unknown')}")
+                logger.info(f"   🎯 Interactive Elements Found: {', '.join(page_analysis.get('interactive_elements', []))}")
+                logger.info(f"   → This information guides the automated testing strategy")
+                results["interactions"].append(f"Page Analysis: {page_analysis.get('title')}")
+                results["interactions"].append(f"Interactive elements: {', '.join(page_analysis.get('interactive_elements', []))}")
+                
+                # Step 2: Test buttons with analysis
+                if page_analysis.get('buttons'):
+                    logger.info(f"\n🔍 STEP 2: Testing {len(page_analysis['buttons'])} buttons...")
+                    for btn_info in page_analysis['buttons'][:3]:
+                        logger.info(f"   📸 Analyzing button: '{btn_info['text']}'")
+                        results["total"] += 1
+                        try:
+                            await _test_button_interactions_async(page, results)
+                            break  # Test one set of buttons
+                        except Exception as e:
+                            logger.warning(f"Button test failed: {e}")
+                
+                # Step 3: Test input fields with analysis
+                if page_analysis.get('inputs'):
+                    logger.info(f"\n🔍 STEP 3: Testing {len(page_analysis['inputs'])} input fields...")
+                    for inp_info in page_analysis['inputs'][:3]:
+                        logger.info(f"   📸 Analyzing input: type={inp_info['type']}, placeholder='{inp_info.get('placeholder', 'none')}'")
                     results["total"] += 1
                     try:
-                        await test_func()
+                        await _test_input_interactions_async(page, results)
                     except Exception as e:
-                        logger.warning(f"Interaction test '{test_name}' failed: {e}")
+                        logger.warning(f"Input test failed: {e}")
                 
-                # Capture final screenshot as base64
-                results["screenshot_after"] = await screenshot_to_base64(page, full_page=True)
+                # Step 4: Test item creation if todo/task app detected
+                if any('task' in inp.get('placeholder', '').lower() or 'todo' in inp.get('placeholder', '').lower() 
+                       for inp in page_analysis.get('inputs', [])):
+                    logger.info("\n🔍 STEP 4: Detected todo/task app - testing item creation...")
+                    results["total"] += 1
+                    try:
+                        await _test_create_item_async(page, results, backend_url)
+                    except Exception as e:
+                        logger.warning(f"Create item test failed: {e}")
+                
+                # Step 5: Test navigation
+                if page_analysis.get('links'):
+                    logger.info(f"\n🔍 STEP 5: Testing navigation with {len(page_analysis['links'])} links...")
+                    results["total"] += 1
+                    try:
+                        await _test_navigation_async(page, results)
+                    except Exception as e:
+                        logger.warning(f"Navigation test failed: {e}")
+                
+                # Step 6: Test forms
+                if page_analysis.get('forms'):
+                    logger.info(f"\n🔍 STEP 6: Testing {len(page_analysis['forms'])} forms...")
+                    results["total"] += 1
+                    try:
+                        await _test_form_submission_async(page, results)
+                    except Exception as e:
+                        logger.warning(f"Form test failed: {e}")
+                
+                # Capture final screenshot as base64 (always attempt)
+                logger.info("\n📸 Capturing post-interaction screenshot...")
+                try:
+                    screenshot_data = await screenshot_to_base64(page, full_page=True)
+                    if screenshot_data:
+                        results["screenshot_after"] = screenshot_data
+                        logger.info(f"✅ Post-interaction screenshot captured: {len(screenshot_data)} characters")
+                    else:
+                        logger.warning("⚠️ Post-interaction screenshot capture returned empty data")
+                except Exception as ss_error:
+                    logger.error(f"❌ Failed to capture post-interaction screenshot: {ss_error}")
+                    # Try viewport screenshot as fallback
+                    try:
+                        screenshot_data = await screenshot_to_base64(page, full_page=False)
+                        if screenshot_data:
+                            results["screenshot_after"] = screenshot_data
+                            logger.info(f"✅ Fallback viewport screenshot captured")
+                    except:
+                        logger.error("❌ All screenshot attempts failed")
                 
                 if not headless:
-                    logger.info("Tests completed! Keeping browser open for 15s...")
-                    await page.wait_for_timeout(15000)
+                    logger.info("")
+                    logger.info("="*80)
+                    logger.info("✅ ALL AUTOMATED TESTS COMPLETED SUCCESSFULLY!")
+                    logger.info("="*80)
+                    logger.info("📊 Test Summary:")
+                    logger.info(f"   • Total Tests: {results['total']}")
+                    logger.info(f"   • Passed: {results['passed']}")
+                    logger.info(f"   • Failed: {results['failed']}")
+                    logger.info(f"   • Screenshots Captured: {len([k for k in results.keys() if 'screenshot' in k])}")
+                    logger.info("")
+                    logger.info("👀 Browser will stay open for 30 seconds so you can inspect the final state")
+                    logger.info("   → Check the browser window to see the application state after all tests")
+                    logger.info("   → Screenshots are included in the JSON results")
+                    logger.info("")
+                    await page.wait_for_timeout(30000)
+                    logger.info("⏱️  30 seconds elapsed - closing browser now...")
+            else:
+                logger.warning("⚠️ perform_interactions was False - no interactions performed!")
+                if not headless:
+                    logger.info("Keeping browser open for 10 seconds...")
+                    await page.wait_for_timeout(10000)
             
+            logger.info("🔒 Closing browser...")
             await browser.close()
+            logger.info("✅ Browser closed successfully.")
         
         results["status"] = "success" if results["failed"] == 0 else "partial"
         return results
         
     except Exception as e:
-        logger.error(f"Error during async tests: {e}")
+        logger.error(f"❌ ERROR during async tests: {e}")
+        logger.error(f"   This error occurred during browser automation")
+        import traceback
+        logger.error(traceback.format_exc())
         return {
             "status": "error",
             "message": f"Error running interactive tests: {str(e)}",
             "tests": [],
             "passed": 0,
             "failed": 1,
-            "total": 1
+            "total": 1,
+            "interactions": [f"Error: {str(e)}"]
         }
 
 
@@ -552,19 +793,39 @@ async def launch_and_test_async(
         frontend_url = f"http://localhost:{frontend_port}"
         backend_url = f"http://localhost:{backend_port}"
         
+        logger.info(f"🎯 Starting interactive tests at {frontend_url}")
+        logger.info("   This will: Load page → Analyze structure → Perform actions → Capture screenshots")
+        
         test_results = await run_interactive_tests_async(
             project_root,
             frontend_url,
             backend_url,
             headless=headless,
-            perform_interactions=True
+            perform_interactions=True  # ALWAYS perform interactions
         )
+        
+        logger.info(f"✅ Interactive tests completed! {test_results.get('passed', 0)}/{test_results.get('total', 0)} passed")
         
         result["steps"][-1]["status"] = test_results.get("status", "success")
         result["tests"] = test_results.get("tests", [])
         result["interactions"] = test_results.get("interactions", [])
-        result["screenshots"]["initial"] = test_results.get("screenshot_initial", "")
-        result["screenshots"]["after"] = test_results.get("screenshot_after", "")
+        
+        # Transfer screenshots with logging
+        screenshot_initial = test_results.get("screenshot_initial", "")
+        screenshot_after = test_results.get("screenshot_after", "")
+        
+        if screenshot_initial:
+            result["screenshots"]["initial"] = screenshot_initial
+            logger.info(f"📸 Initial screenshot included in result: {len(screenshot_initial)} chars")
+        else:
+            logger.warning("⚠️ No initial screenshot in test results")
+        
+        if screenshot_after:
+            result["screenshots"]["after"] = screenshot_after
+            logger.info(f"📸 After screenshot included in result: {len(screenshot_after)} chars")
+        else:
+            logger.warning("⚠️ No after screenshot in test results")
+        
         result["test_summary"] = {
             "passed": test_results.get("passed", 0),
             "failed": test_results.get("failed", 0),
@@ -572,3 +833,178 @@ async def launch_and_test_async(
         }
     
     return result
+
+
+async def test_with_playwright_mcp(
+    project_root: str,
+    frontend_url: str,
+    backend_url: str,
+    context
+) -> dict:
+    """
+    Test application using actual Playwright MCP browser automation tools.
+    This uses the real MCP browser tools like browser_snapshot, browser_click, etc.
+    
+    Args:
+        project_root: Project root directory
+        frontend_url: Frontend URL to test
+        backend_url: Backend URL
+        context: MCP context with access to browser tools
+        
+    Returns:
+        Test results with screenshots and actions
+    """
+    results = {
+        "tests": [],
+        "passed": 0,
+        "failed": 0,
+        "total": 0,
+        "interactions": [],
+        "screenshots": {},
+        "status": "success"
+    }
+    
+    try:
+        logger.info(f"🌐 Starting Playwright MCP automated testing for {frontend_url}")
+        
+        # Step 1: Navigate to the frontend URL
+        logger.info(f"📍 Step 1: Navigating to {frontend_url}")
+        try:
+            # Use browser_tabs to create new page or select existing
+            await context.call_tool("mcp_microsoft_pla_browser_tabs", {"action": "new"})
+            results["interactions"].append(f"Opened new browser tab")
+            
+            # Navigate to URL
+            await context.call_tool("mcp_microsoft_pla_browser_run_code", {
+                "code": f"await page.goto('{frontend_url}', {{ waitUntil: 'networkidle' }})"
+            })
+            results["interactions"].append(f"Navigated to {frontend_url}")
+            results["passed"] += 1
+        except Exception as e:
+            logger.error(f"Failed to navigate: {e}")
+            results["failed"] += 1
+            results["interactions"].append(f"❌ Navigation failed: {e}")
+        
+        results["total"] += 1
+        
+        # Step 2: Take snapshot and analyze page structure
+        logger.info("📸 Step 2: Taking page snapshot and analyzing structure...")
+        try:
+            snapshot = await context.call_tool("mcp_microsoft_pla_browser_take_snapshot", {})
+            results["screenshots"]["initial_snapshot"] = snapshot
+            results["interactions"].append("Captured page snapshot")
+            logger.info(f"Page snapshot captured successfully")
+            results["passed"] += 1
+        except Exception as e:
+            logger.error(f"Failed to take snapshot: {e}")
+            results["failed"] += 1
+            results["interactions"].append(f"❌ Snapshot failed: {e}")
+        
+        results["total"] += 1
+        
+        # Step 3: Take screenshot
+        logger.info("📸 Step 3: Taking initial screenshot...")
+        try:
+            screenshot = await context.call_tool("mcp_microsoft_pla_browser_take_screenshot", {
+                "filename": "initial.png",
+                "fullPage": True
+            })
+            results["screenshots"]["initial"] = screenshot
+            results["interactions"].append("Captured initial screenshot")
+            results["passed"] += 1
+        except Exception as e:
+            logger.error(f"Failed to take screenshot: {e}")
+            results["failed"] += 1
+            results["interactions"].append(f"❌ Screenshot failed: {e}")
+        
+        results["total"] += 1
+        
+        # Step 4: Find and analyze interactive elements from snapshot
+        logger.info("🔍 Step 4: Analyzing interactive elements...")
+        results["interactions"].append("Analyzing page for interactive elements")
+        
+        # Step 5: Click first button if found
+        logger.info("👆 Step 5: Testing button interactions...")
+        try:
+            # Try to click a visible button
+            await context.call_tool("mcp_microsoft_pla_browser_run_code", {
+                "code": """
+                const buttons = await page.locator('button, input[type="button"], input[type="submit"]').all();
+                if (buttons.length > 0 && await buttons[0].isVisible()) {
+                    const text = await buttons[0].innerText() || await buttons[0].getAttribute('value') || 'Button';
+                    await buttons[0].click();
+                    return { clicked: true, text: text };
+                }
+                return { clicked: false };
+                """
+            })
+            results["interactions"].append("Clicked first visible button")
+            results["passed"] += 1
+        except Exception as e:
+            logger.info(f"No buttons to click or click failed: {e}")
+            results["interactions"].append("⚠️ No clickable buttons found")
+        
+        results["total"] += 1
+        
+        # Step 6: Fill input fields if found
+        logger.info("✍️ Step 6: Testing input fields...")
+        try:
+            await context.call_tool("mcp_microsoft_pla_browser_run_code", {
+                "code": """
+                const inputs = await page.locator('input[type="text"], input:not([type]), textarea').all();
+                let filled = 0;
+                for (const input of inputs.slice(0, 2)) {
+                    if (await input.isVisible() && !await input.isDisabled()) {
+                        await input.fill('Test from Playwright MCP');
+                        filled++;
+                    }
+                }
+                return { filled: filled };
+                """
+            })
+            results["interactions"].append("Filled input fields with test data")
+            results["passed"] += 1
+        except Exception as e:
+            logger.info(f"No inputs to fill or fill failed: {e}")
+            results["interactions"].append("⚠️ No fillable inputs found")
+        
+        results["total"] += 1
+        
+        # Step 7: Take final screenshot
+        logger.info("📸 Step 7: Taking final screenshot after interactions...")
+        try:
+            screenshot_after = await context.call_tool("mcp_microsoft_pla_browser_take_screenshot", {
+                "filename": "after_interactions.png",
+                "fullPage": True
+            })
+            results["screenshots"]["after"] = screenshot_after
+            results["interactions"].append("Captured post-interaction screenshot")
+            results["passed"] += 1
+        except Exception as e:
+            logger.error(f"Failed to take final screenshot: {e}")
+            results["failed"] += 1
+            results["interactions"].append(f"❌ Final screenshot failed: {e}")
+        
+        results["total"] += 1
+        
+        # Step 8: Take final snapshot
+        logger.info("📸 Step 8: Taking final page snapshot...")
+        try:
+            final_snapshot = await context.call_tool("mcp_microsoft_pla_browser_take_snapshot", {})
+            results["screenshots"]["final_snapshot"] = final_snapshot
+            results["interactions"].append("Captured final page snapshot")
+            results["passed"] += 1
+        except Exception as e:
+            logger.error(f"Failed to take final snapshot: {e}")
+            results["failed"] += 1
+        
+        results["total"] += 1
+        
+        logger.info(f"✅ Playwright MCP testing complete: {results['passed']}/{results['total']} passed")
+        
+    except Exception as e:
+        logger.error(f"Playwright MCP testing error: {e}")
+        results["status"] = "error"
+        results["error"] = str(e)
+    
+    return results

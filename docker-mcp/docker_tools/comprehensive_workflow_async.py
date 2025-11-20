@@ -278,28 +278,55 @@ async def comprehensive_dockerize_and_test_async(
     report += "=" * 70 + "\n"
     report += "**STEP 3: Building Containers & Launching Application...**\n\n"
     
-    # Initialize ports with detected values from services analysis
+    # Initialize ports with defaults
     backend_port = 8000
     frontend_port = 3000
     
-    # Extract ports from service analysis
+    # Extract ports from service analysis - check both 'analysis' dict and top-level 'port'
+    detected_ports = {}
     for name, service_info in services.items():
+        # Try to get port from analysis dict first
         analysis = service_info.get('analysis', {})
-        detected_port = analysis.get('port')
+        detected_port = analysis.get('port') or service_info.get('port')
         
         if detected_port:
-            if name.lower() in ['backend', 'api', 'server'] or service_info.get('category') == 'web_service':
+            detected_ports[name] = detected_port
+            logger.info(f"Detected port {detected_port} for service '{name}'")
+            
+            # Categorize based on service name and type
+            service_type = service_info.get('type', '').lower()
+            app_type = service_info.get('language', '').lower()
+            category = service_info.get('category', '').lower()
+            
+            # Backend services
+            if name.lower() in ['backend', 'api', 'server'] or 'backend' in name.lower():
                 backend_port = detected_port
-            elif name.lower() in ['frontend', 'client', 'web'] or service_info.get('category') == 'frontend':
+                logger.info(f"Using port {detected_port} for backend (service: {name})")
+            # Frontend services
+            elif name.lower() in ['frontend', 'client', 'web', 'ui'] or 'frontend' in name.lower():
                 frontend_port = detected_port
-            else:
-                # For single-service apps, use the detected port as primary
-                if len(services) == 1:
-                    app_type = service_info.get('language', '')
-                    if app_type == 'node':
-                        frontend_port = detected_port
-                    else:
-                        backend_port = detected_port
+                logger.info(f"Using port {detected_port} for frontend (service: {name})")
+            # Category-based detection
+            elif category in ['web_service', 'api']:
+                backend_port = detected_port
+                logger.info(f"Using port {detected_port} for backend (category: {category})")
+            elif category == 'frontend':
+                frontend_port = detected_port
+                logger.info(f"Using port {detected_port} for frontend (category: {category})")
+            # For single-service apps, use language to determine type
+            elif len(services) == 1:
+                if app_type in ['node', 'javascript', 'typescript']:
+                    frontend_port = detected_port
+                    logger.info(f"Using port {detected_port} for frontend (single Node.js service)")
+                else:
+                    backend_port = detected_port
+                    logger.info(f"Using port {detected_port} for backend (single service)")
+    
+    if detected_ports:
+        report += f"🔍 **Detected Ports:**\n"
+        for svc_name, port in detected_ports.items():
+            report += f"   - {svc_name}: {port}\n"
+        report += "\n"
     
     try:
         # Check if containers are already running
@@ -362,10 +389,22 @@ async def comprehensive_dockerize_and_test_async(
     
     # STEP 4: Launch in browser and perform E2E tests
     report += "=" * 70 + "\n"
-    report += "**STEP 4: Running End-to-End Tests with Real Browser...**\n\n"
+    report += "**STEP 4: Intelligent E2E Testing (Playwright MCP Style)...**\n\n"
+    report += "🤖 **Smart Testing Approach:**\n"
+    report += "   1. Launch browser and load application\n"
+    report += "   2. Analyze page structure (buttons, inputs, forms, links)\n"
+    report += "   3. Take screenshot before each major action\n"
+    report += "   4. Perform intelligent interactions based on what's found\n"
+    report += "   5. Verify results and capture final state\n\n"
     
     if test_e2e:
         try:
+            # Log final ports being used
+            logger.info(f"Starting E2E tests with backend_port={backend_port}, frontend_port={frontend_port}")
+            report += f"🌐 **Testing URLs:**\n"
+            report += f"   - Frontend: http://localhost:{frontend_port}\n"
+            report += f"   - Backend: http://localhost:{backend_port}\n\n"
+            
             # Run async E2E tests
             test_result = await launch_and_test_async(
                 project_root,
@@ -379,12 +418,24 @@ async def comprehensive_dockerize_and_test_async(
             # Extract screenshots (already base64 encoded)
             if 'screenshots' in test_result:
                 result["screenshots"] = test_result["screenshots"]
+                logger.info(f"Screenshots received from test: {list(test_result['screenshots'].keys())}")
                 
                 if test_result["screenshots"].get("initial"):
-                    report += "📸 **Initial Screenshot Captured** (available in result data)\n\n"
+                    screenshot_size = len(test_result["screenshots"]["initial"])
+                    logger.info(f"Initial screenshot captured: {screenshot_size} characters")
+                    report += f"📸 **Initial Screenshot Captured** ({screenshot_size} bytes base64)\n\n"
+                else:
+                    logger.warning("Initial screenshot not found in test results")
                 
                 if test_result["screenshots"].get("after"):
-                    report += "📸 **Post-Interaction Screenshot Captured** (available in result data)\n\n"
+                    screenshot_size = len(test_result["screenshots"]["after"])
+                    logger.info(f"Post-interaction screenshot captured: {screenshot_size} characters")
+                    report += f"📸 **Post-Interaction Screenshot Captured** ({screenshot_size} bytes base64)\n\n"
+                else:
+                    logger.warning("Post-interaction screenshot not found in test results")
+            else:
+                logger.warning("No screenshots key found in test results")
+                result["screenshots"] = {}
             
             # Add test results
             if 'tests' in test_result:
@@ -407,11 +458,13 @@ async def comprehensive_dockerize_and_test_async(
                     report += "\n\n"
             
             # Add interactions
-            if 'interactions' in test_result:
-                report += "**User Interactions Performed:**\n\n"
-                for interaction in test_result["interactions"]:
-                    report += f"   - {interaction}\n"
+            if 'interactions' in test_result and test_result["interactions"]:
+                report += "**🤖 Intelligent Actions Performed:**\n\n"
+                report += "The test engine analyzed the page and performed these actions:\n\n"
+                for i, interaction in enumerate(test_result["interactions"], 1):
+                    report += f"   {i}. {interaction}\n"
                 report += "\n"
+                report += f"Total actions: {len(test_result['interactions'])}\n\n"
             
         except Exception as e:
             report += f"❌ Error during E2E testing: {str(e)}\n\n"

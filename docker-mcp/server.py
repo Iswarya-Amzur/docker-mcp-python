@@ -20,7 +20,8 @@ from docker_tools.e2e_tester_async import (
     launch_and_test_async,
     check_containers_running_async,
     start_docker_compose_async,
-    wait_for_services_async
+    wait_for_services_async,
+    test_with_playwright_mcp
 )
 from docker_tools.logging_monitor import (
     setup_complete_monitoring,
@@ -67,14 +68,24 @@ async def dockerize_and_test(
     """
     🎯 ULTIMATE COMPREHENSIVE TOOL - Complete Async Workflow Orchestrator
     
-    This is the PERFECT tool for prompts like "dockerize this application and test it".
-    It handles EVERYTHING automatically using ASYNC Playwright:
+    USE THIS TOOL WHEN:
+    - User asks to "dockerize this application and test it"
+    - User wants to "dockerize and test"
+    - User wants complete workflow (dockerize + test + monitor)
+    - User wants end-to-end automation from code to running tests
+    
+    DO NOT USE THIS TOOL WHEN:
+    - User just wants a screenshot (use capture_app_screenshot)
+    - User just wants to dockerize (use dockerize_project)
+    - User just wants to test existing containers (use test_application_e2e)
+    
+    This tool handles EVERYTHING automatically using ASYNC Playwright:
     
     1. ✅ Analyzes codebase and detects ALL services (including databases)
     2. ✅ Creates/validates Docker files (checks if they exist, validates them)
-    3. ✅ Builds containers and launches application in browser
+    3. ✅ Builds containers and launches application
     4. ✅ Performs REAL browser interactions using direct Playwright library
-    5. ✅ Captures screenshots as BASE64 (displays in chat!)
+    5. ✅ Captures screenshots during testing (as evidence)
     6. ✅ Tests application end-to-end with actual Playwright automation
     7. ✅ Sets up Grafana monitoring (if requested)
     8. ✅ Automatically fixes any errors encountered
@@ -113,28 +124,11 @@ async def dockerize_and_test(
             auto_fix_errors=auto_fix_errors if auto_fix_errors is not None else True
         )
         
-        # Format result for proper chat display
-        formatted_result = result.get("report", "")
-        
-        # If screenshots are available, append them to the report in a format that displays in chat
-        screenshots = result.get("screenshots", {})
-        if screenshots:
-            formatted_result += "\n\n" + "="*70 + "\n"
-            formatted_result += "📸 **SCREENSHOTS**\n\n"
-            
-            if screenshots.get("initial"):
-                formatted_result += "**Initial Application Load:**\n"
-                formatted_result += f"<img src='{screenshots['initial']}' style='max-width: 100%; height: auto;' />\n\n"
-            
-            if screenshots.get("after"):
-                formatted_result += "**After User Interactions:**\n"
-                formatted_result += f"<img src='{screenshots['after']}' style='max-width: 100%; height: auto;' />\n\n"
-        
-        # Return a proper dictionary structure
+        # Return result directly - Playwright MCP handles screenshot format
         return {
             "status": result.get("status", "success"),
-            "report": formatted_result,
-            "screenshots": screenshots,
+            "report": result.get("report", ""),
+            "screenshots": result.get("screenshots", {}),
             "services": result.get("services", {}),
             "databases": result.get("databases", {}),
             "tests": result.get("tests", [])
@@ -215,10 +209,24 @@ async def test_application_e2e(
     """
     🎯 PRIMARY TESTING TOOL - Direct Playwright Browser Automation
     
-    Complete end-to-end testing using direct Playwright library (Async API).
+    Complete end-to-end TESTING using direct Playwright library (Async API).
+    This tool TESTS your application by performing user interactions.
+    
+    USE THIS TOOL WHEN:
+    - User asks to "test the application"
+    - User wants to "run E2E tests"
+    - User wants to "verify the app works"
+    - User wants to "test with interactions"
+    - User wants automated testing with clicks, form fills, etc.
+    
+    DO NOT USE THIS TOOL WHEN:
+    - User just wants a screenshot (use capture_app_screenshot instead)
+    - User just wants to "see" the app without testing
+    - User asks to "launch and take screenshot" (use capture_app_screenshot)
     
     What it does:
     - Checks if containers are running (starts them if needed)
+    - **DETECTS PORTS AUTOMATICALLY** from your code if not specified
     - Waits for services to be ready
     - Launches VISIBLE browser window (Chromium) with Playwright Async API
     - Loads your application
@@ -228,21 +236,21 @@ async def test_application_e2e(
       * Creates items
       * Navigates pages
       * Submits forms
-    - Captures screenshots as BASE64 (displays in chat!)
+    - Captures screenshots during testing (as evidence)
     - Validates frontend-backend communication
     - Generates detailed test report
     - Keeps browser open 15 seconds for inspection
     
     Perfect for:
-    - Verifying your dockerized app works
-    - Visual testing and demos
-    - QA validation
-    - Troubleshooting UI issues
+    - TESTING your dockerized app functionality
+    - Automated QA validation
+    - E2E test automation
+    - Troubleshooting functional issues
     
     Args:
         project_root: Root directory with docker-compose.yml
-        backend_port: Backend port (default: 8000)
-        frontend_port: Frontend port (default: 3000)
+        backend_port: Backend port (auto-detected if not provided)
+        frontend_port: Frontend port (auto-detected if not provided)
         cleanup: Stop containers after test (default: False - keeps running)
         headless: Run browser in headless mode (default: False - shows browser)
     
@@ -260,49 +268,141 @@ async def test_application_e2e(
     """
     try:
         logger.info(f"Launching and testing application at {project_root} (ASYNC)")
+        
+        # Auto-detect ports if not provided
+        if backend_port is None or frontend_port is None:
+            logger.info("🔍 Auto-detecting ports from project services...")
+            try:
+                # First check docker-compose.yml for running container ports
+                detected_backend = backend_port
+                detected_frontend = frontend_port
+                
+                compose_file = os.path.join(project_root, 'docker-compose.yml')
+                if os.path.exists(compose_file):
+                    try:
+                        import yaml
+                        with open(compose_file, 'r') as f:
+                            compose_data = yaml.safe_load(f)
+                            if compose_data and 'services' in compose_data:
+                                for svc_name, svc_config in compose_data['services'].items():
+                                    ports = svc_config.get('ports', [])
+                                    for port_mapping in ports:
+                                        if isinstance(port_mapping, str):
+                                            # Format: "5173:5173" or "5173:80"
+                                            host_port = port_mapping.split(':')[0]
+                                            try:
+                                                host_port_num = int(host_port)
+                                                logger.info(f"   Found port {host_port_num} in docker-compose for '{svc_name}'")
+                                                
+                                                if 'frontend' in svc_name.lower() or 'client' in svc_name.lower() or 'web' in svc_name.lower():
+                                                    if detected_frontend is None:
+                                                        detected_frontend = host_port_num
+                                                        logger.info(f"   ✅ Using port {host_port_num} for frontend from docker-compose")
+                                                elif 'backend' in svc_name.lower() or 'api' in svc_name.lower() or 'server' in svc_name.lower():
+                                                    if detected_backend is None:
+                                                        detected_backend = host_port_num
+                                                        logger.info(f"   ✅ Using port {host_port_num} for backend from docker-compose")
+                                            except ValueError:
+                                                pass
+                    except Exception as e:
+                        logger.warning(f"Could not parse docker-compose.yml: {e}")
+                
+                # Then check service analysis if still not found
+                detection_result = detect_services(project_root)
+                services = detection_result.get('application_services', {})
+                
+                if detected_backend is None:
+                    detected_backend = 8000
+                if detected_frontend is None:
+                    detected_frontend = 3000
+                
+                for name, service_info in services.items():
+                    analysis = service_info.get('analysis', {})
+                    detected_port = analysis.get('port') or service_info.get('port')
+                    
+                    if detected_port:
+                        logger.info(f"   Found port {detected_port} for service '{name}'")
+                        
+                        # Categorize services
+                        if name.lower() in ['backend', 'api', 'server'] or 'backend' in name.lower():
+                            if backend_port is None:
+                                detected_backend = detected_port
+                                logger.info(f"   ✅ Using port {detected_port} for backend")
+                        elif name.lower() in ['frontend', 'client', 'web', 'ui'] or 'frontend' in name.lower():
+                            if frontend_port is None:
+                                detected_frontend = detected_port
+                                logger.info(f"   ✅ Using port {detected_port} for frontend")
+                        elif len(services) == 1:
+                            # Single service app
+                            app_type = service_info.get('language', '').lower()
+                            if app_type in ['node', 'javascript', 'typescript']:
+                                if frontend_port is None:
+                                    detected_frontend = detected_port
+                                    logger.info(f"   ✅ Using port {detected_port} for frontend (Node.js)")
+                            else:
+                                if backend_port is None:
+                                    detected_backend = detected_port
+                                    logger.info(f"   ✅ Using port {detected_port} for backend")
+                
+                # Use detected ports (docker-compose takes priority, already set above)
+                backend_port = detected_backend
+                frontend_port = detected_frontend
+                
+                logger.info(f"🌐 Final detected ports: backend={backend_port}, frontend={frontend_port}")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Port detection failed, using defaults: {e}")
+                backend_port = backend_port or 8000
+                frontend_port = frontend_port or 3000
+        
+        # Use our Playwright integration (works like Playwright MCP)
         result = await launch_and_test_async(
             project_root,
-            backend_port or 8000,
-            frontend_port or 3000,
+            backend_port,
+            frontend_port,
             cleanup if cleanup is not None else False,
             headless if headless is not None else False,
             show_browser=True
         )
         
         # Format result for chat display with inline screenshots
-        formatted_output = "🚀 **E2E Test Results**\n\n"
+        formatted_output = "🚀 **Intelligent E2E Test Results** (Playwright MCP Style)\n\n"
+        formatted_output += f"🌐 **Testing URLs:**\n"
+        formatted_output += f"   - Frontend: http://localhost:{frontend_port}\n"
+        formatted_output += f"   - Backend: http://localhost:{backend_port}\n\n"
         
         # Add steps
         if 'steps' in result:
+            formatted_output += "**Workflow Steps:**\n"
             for step in result['steps']:
                 status_icon = "✅" if step.get('status') == 'success' else "⏳" if step.get('status') == 'running' else "❌"
                 formatted_output += f"{status_icon} {step.get('name', 'Step')}\n"
+            formatted_output += "\n"
+        
+        # Add interactions performed
+        if 'interactions' in result and result['interactions']:
+            formatted_output += "**🤖 Intelligent Actions Performed:**\n"
+            for interaction in result['interactions'][:10]:  # Show first 10
+                formatted_output += f"   • {interaction}\n"
+            if len(result.get('interactions', [])) > 10:
+                formatted_output += f"   ... and {len(result['interactions']) - 10} more actions\n"
+            formatted_output += "\n"
         
         # Add test summary
         if 'test_summary' in result:
             summary = result['test_summary']
-            formatted_output += f"\n**Test Summary:** {summary.get('passed', 0)}/{summary.get('total', 0)} tests passed\n"
+            formatted_output += f"**Test Summary:** {summary.get('passed', 0)}/{summary.get('total', 0)} tests passed\n"
+            if summary.get('failed', 0) > 0:
+                formatted_output += f"   ⚠️ {summary.get('failed', 0)} tests failed\n"
+            formatted_output += "\n"
         
-        # Add screenshots with proper HTML formatting for chat display
-        screenshots = result.get("screenshots", {})
-        if screenshots:
-            formatted_output += "\n📸 **SCREENSHOTS**\n\n"
-            
-            if screenshots.get("initial"):
-                formatted_output += "**Initial Application Load:**\n"
-                formatted_output += f"<img src='{screenshots['initial']}' style='max-width: 100%; height: auto; border: 1px solid #ccc; margin: 10px 0;' alt='Initial Screenshot' />\n\n"
-            
-            if screenshots.get("after"):
-                formatted_output += "**After User Interactions:**\n" 
-                formatted_output += f"<img src='{screenshots['after']}' style='max-width: 100%; height: auto; border: 1px solid #ccc; margin: 10px 0;' alt='After Interactions Screenshot' />\n\n"
-        
-        # Return a proper dictionary structure with the formatted report
+        # Return result directly - Playwright MCP handles screenshot format
         return {
             "status": result.get("status", "success"),
             "report": formatted_output,
             "steps": result.get("steps", []),
             "tests": result.get("tests", []),
-            "screenshots": screenshots,
+            "screenshots": result.get("screenshots", {}),
             "test_summary": result.get("test_summary", {})
         }
     except Exception as e:
@@ -768,21 +868,35 @@ def capture_app_screenshot(
     wait_time: Optional[int] = None
 ):
     """
-    Capture a screenshot of a webpage using direct Playwright library.
-    Uses the Playwright Python library for browser automation.
+    🎯 LAUNCH APPLICATION AND TAKE SCREENSHOT
+    
+    Simple tool to launch your application in a browser and capture a screenshot.
+    Use this when you just want to see what the app looks like, WITHOUT running tests.
     
     What it does:
     - Launches headless browser
-    - Navigates to URL
+    - Navigates to your application URL
     - Waits for page to load
     - Captures full-page screenshot
+    - Displays screenshot in chat
     - Saves to specified path
     
+    USE THIS TOOL WHEN:
+    - User asks to "launch and take screenshot"
+    - User asks to "capture screenshot of the application"
+    - User wants to see the app visually (no testing needed)
+    - User wants to document application appearance
+    
+    DO NOT USE THIS TOOL WHEN:
+    - User wants to RUN TESTS or TEST the application
+    - User wants to interact with the app (clicking, filling forms)
+    - User wants to verify functionality
+    
     Perfect for:
+    - Quick visual verification
     - Documenting application state
-    - Visual testing
     - Creating screenshots for reports
-    - Verifying UI appearance
+    - Showing what the app looks like
     
     Args:
         url: URL to capture
@@ -793,7 +907,7 @@ def capture_app_screenshot(
         Status message with screenshot path
         
     Example:
-        capture_app_screenshot(url="http://localhost:3000", output_path="./app.png")
+        capture_app_screenshot(url="http://localhost:5173", output_path="./app.png")
         
         Result: Screenshot saved to ./app.png
     """
@@ -844,7 +958,133 @@ def capture_app_screenshot(
         return f"Error capturing screenshot: {str(e)}"
 
 
-# Tool 10: Validate Dockerfile (NEW)
+# Tool 10: Launch Application and Take Screenshot (COMBINED TOOL)
+@mcp.tool()
+async def launch_and_screenshot(
+    project_root: str,
+    frontend_port: Optional[int] = None,
+    backend_port: Optional[int] = None
+) -> dict:
+    """
+    🎯 LAUNCH APPLICATION AND TAKE SCREENSHOT
+    
+    **USE THIS TOOL WHEN:**
+    - User asks to "launch the application and take a screenshot"
+    - User asks to "start the app and capture screenshot"
+    - User wants to "see what the app looks like"
+    - User wants to "launch and show me the UI"
+    - User wants screenshot WITHOUT running tests
+    
+    **DO NOT USE THIS TOOL WHEN:**
+    - User wants to TEST the application (use test_application_e2e)
+    - User wants to DOCKERIZE and test (use dockerize_and_test)
+    - Application is already running and you have URL (use capture_app_screenshot)
+    
+    What this tool does:
+    1. Checks if containers are running
+    2. Starts containers if needed (with docker-compose)
+    3. Auto-detects ports from your code
+    4. Waits for application to be ready
+    5. Captures full-page screenshot
+    6. Returns screenshot for display in chat
+    7. Keeps containers running
+    
+    Perfect for:
+    - Quick visual check of dockerized app
+    - Showing what the app looks like
+    - Documentation screenshots
+    - Visual verification without testing
+    
+    Args:
+        project_root: Root directory with docker-compose.yml
+        frontend_port: Frontend port (auto-detected if not provided)
+        backend_port: Backend port (auto-detected if not provided)
+    
+    Returns:
+        Dict with screenshot and status
+        
+    Example:
+        launch_and_screenshot(project_root="C:\\MyApp")
+        
+        Result: App starts, screenshot captured and displayed!
+    """
+    try:
+        logger.info(f"Launching application at {project_root} for screenshot")
+        
+        # Auto-detect ports if not provided
+        if frontend_port is None or backend_port is None:
+            from docker_tools.port_detector import detect_ports
+            detected = detect_ports(project_root)
+            frontend_port = frontend_port or detected.get('frontend', 5173)
+            backend_port = backend_port or detected.get('backend', 8000)
+            logger.info(f"Auto-detected ports - Frontend: {frontend_port}, Backend: {backend_port}")
+        
+        # Check if containers are running
+        status = await check_containers_running_async(project_root)
+        
+        if not status.get("running"):
+            logger.info("Containers not running, starting them...")
+            start_result = await start_docker_compose_async(project_root, detached=True)
+            if start_result.get("status") != "success":
+                return {
+                    "status": "error",
+                    "message": f"Failed to start containers: {start_result.get('message')}"
+                }
+            logger.info("Containers started, waiting for services...")
+            
+            # Wait for services to be ready
+            await wait_for_services_async(
+                backend_port=backend_port,
+                frontend_port=frontend_port,
+                timeout=60
+            )
+        else:
+            logger.info(f"Containers already running ({status.get('count')} containers)")
+        
+        # Capture screenshot
+        frontend_url = f"http://localhost:{frontend_port}"
+        logger.info(f"Capturing screenshot of {frontend_url}")
+        
+        # Use the capture_screenshot function
+        screenshot_path = os.path.join(project_root, "app_screenshot.png")
+        result = capture_screenshot(frontend_url, screenshot_path, wait_time=3, return_base64=True)
+        
+        if result['status'] == 'success':
+            analysis = analyze_screenshot(screenshot_path)
+            
+            response_text = f"✅ **Application Launched and Screenshot Captured!**\n\n"
+            response_text += f"**Frontend URL:** {frontend_url}\n"
+            response_text += f"**Screenshot Path:** {screenshot_path}\n"
+            response_text += f"**Analysis:** {analysis['analysis']}\n\n"
+            response_text += f"**Containers Status:** {status.get('count')} containers running\n"
+            response_text += f"**Note:** Containers are still running - access app at {frontend_url}\n"
+            
+            return {
+                "status": "success",
+                "message": response_text,
+                "screenshot_path": screenshot_path,
+                "screenshot_base64": result.get('base64', ''),
+                "frontend_url": frontend_url,
+                "containers_running": status.get('count', 0),
+                "screenshots": {
+                    "initial": result.get('data_url', '')
+                }
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Screenshot capture failed: {result.get('message')}"
+            }
+            
+    except Exception as e:
+        logger.error(f"Error in launch_and_screenshot: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": f"Error launching and capturing screenshot: {str(e)}"
+        }
+
+
+# Tool 11: Validate Dockerfile (NEW)
 @mcp.tool()
 def validate_dockerfile_file(dockerfile_path: str) -> str:
     """

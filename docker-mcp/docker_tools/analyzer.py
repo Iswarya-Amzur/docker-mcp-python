@@ -319,42 +319,144 @@ class EnhancedApplicationAnalyzer:
             self.analysis['detected_files'] = []
     
     def _detect_language(self):
-        """Detect primary programming language."""
+        """Detect primary programming language with flexible validation."""
         language_indicators = {
-            'python': ['requirements.txt', 'pyproject.toml', 'setup.py', 'Pipfile', '*.py'],
-            'node': ['package.json', 'yarn.lock', 'package-lock.json', '*.js', '*.ts'],
-            'java': ['pom.xml', 'build.gradle', '*.java'],
+            'python': ['requirements.txt', 'pyproject.toml', 'setup.py', 'Pipfile', 'poetry.lock', '*.py'],
+            'node': ['package.json', 'yarn.lock', 'package-lock.json', '*.js', '*.ts', '*.jsx', '*.tsx'],
+            'java': ['pom.xml', 'build.gradle', 'build.gradle.kts', '*.java'],
             'go': ['go.mod', 'go.sum', '*.go'],
             'ruby': ['Gemfile', 'Gemfile.lock', '*.rb'],
-            'php': ['composer.json', '*.php'],
-            'rust': ['Cargo.toml', '*.rs'],
-            'dotnet': ['*.csproj', '*.sln', '*.cs'],
+            'php': ['composer.json', 'composer.lock', '*.php'],
+            'rust': ['Cargo.toml', 'Cargo.lock', '*.rs'],
+            'dotnet': ['*.csproj', '*.sln', '*.cs', '*.vb'],
             'scala': ['build.sbt', '*.scala'],
-            'kotlin': ['*.kt', '*.kts']
+            'kotlin': ['*.kt', '*.kts', 'build.gradle.kts']
         }
+        
+        # Key files that indicate a real application/service
+        required_indicators = {
+            'python': ['requirements.txt', 'pyproject.toml', 'setup.py', 'Pipfile', 'poetry.lock'],
+            'node': ['package.json'],
+            'java': ['pom.xml', 'build.gradle', 'build.gradle.kts'],
+            'go': ['go.mod'],
+            'ruby': ['Gemfile'],
+            'php': ['composer.json'],
+            'rust': ['Cargo.toml'],
+            'dotnet': ['*.csproj', '*.sln'],
+            'scala': ['build.sbt'],
+            'kotlin': ['build.gradle.kts']
+        }
+        
+        # Directories to exclude from language detection (mobile/build artifacts)
+        excluded_dirs = [
+            'android', 'ios', 'mobile',  # Mobile build directories
+            'build', 'dist', 'out', 'target',  # Build output directories
+            'node_modules', '__pycache__', '.git', 'venv', '.venv',  # Dependencies/caches
+            '.gradle', '.next', '.nuxt', 'coverage',  # Framework caches
+            'capacitor-cordova-android-plugins'  # Capacitor build artifacts
+        ]
         
         detected_languages = {}
         
+        # First, check for root-level package managers (highest priority)
+        root_package_manager = None
+        if (self.app_path / 'package.json').exists():
+            root_package_manager = 'node'
+        elif (self.app_path / 'requirements.txt').exists() or (self.app_path / 'pyproject.toml').exists():
+            root_package_manager = 'python'
+        elif (self.app_path / 'pom.xml').exists() or (self.app_path / 'build.gradle').exists():
+            root_package_manager = 'java'
+        elif (self.app_path / 'go.mod').exists():
+            root_package_manager = 'go'
+        elif (self.app_path / 'Cargo.toml').exists():
+            root_package_manager = 'rust'
+        elif (self.app_path / 'Gemfile').exists():
+            root_package_manager = 'ruby'
+        elif (self.app_path / 'composer.json').exists():
+            root_package_manager = 'php'
+        
         for lang, indicators in language_indicators.items():
             score = 0
+            has_required = False
+            required_file_count = 0
+            
+            # MASSIVE bonus if this language has root-level package manager
+            is_root_language = (root_package_manager == lang)
+            
+            # Check if required indicator exists - with better tracking
+            for req_indicator in required_indicators.get(lang, []):
+                if req_indicator.startswith('*.'):
+                    matches = list(self.app_path.glob(f'*{req_indicator[1:]}'))  # Check root first
+                    if not matches:
+                        matches = list(self.app_path.glob(f'**/*{req_indicator[1:]}'))  # Then recursive
+                else:
+                    matches = list(self.app_path.glob(req_indicator))  # Check root first
+                    if not matches:
+                        matches = list(self.app_path.glob(f'**/{req_indicator}'))  # Then recursive
+                
+                if matches:
+                    has_required = True
+                    required_file_count = len(matches)
+                    # Massive bonus for root package manager
+                    weight = 1000 if is_root_language else 100
+                    score += len(matches) * weight
+                    break
+            
+            # Only continue if required indicators are present
+            if not has_required:
+                continue
+            
+            # Helper function to check if path should be excluded
+            def should_exclude(file_path: Path) -> bool:
+                try:
+                    parts = file_path.relative_to(self.app_path).parts
+                    return any(excluded_dir in parts for excluded_dir in excluded_dirs)
+                except:
+                    return False
+            
+            # Count source code files (EXCLUDING mobile/build directories)
+            source_file_count = 0
             for indicator in indicators:
                 if indicator.startswith('*.'):
-                    # File extension pattern
                     ext = indicator[1:]
-                    matches = list(self.app_path.glob(f'**/*{ext}'))
-                    score += len(matches)
+                    # Check root directory first
+                    root_matches = [f for f in self.app_path.glob(f'*{ext}') if not should_exclude(f)]
+                    # Then check common source directories
+                    src_matches = [f for f in self.app_path.glob(f'src/**/*{ext}') if not should_exclude(f)]
+                    app_matches = [f for f in self.app_path.glob(f'app/**/*{ext}') if not should_exclude(f)]
+                    lib_matches = [f for f in self.app_path.glob(f'lib/**/*{ext}') if not should_exclude(f)]
+                    
+                    all_matches = root_matches + src_matches + app_matches + lib_matches
+                    source_file_count = len(all_matches)
+                    
+                    # More flexible file count requirements:
+                    # - If has package manager file, need at least 1 source file
+                    # - Award points proportional to file count
+                    # - Root language gets higher weight for source files
+                    if source_file_count > 0:
+                        weight = 5 if is_root_language else 2
+                        score += min(source_file_count * weight, 100 if is_root_language else 50)
                 else:
-                    # Specific file pattern
-                    matches = list(self.app_path.glob(f'**/{indicator}'))
-                    score += len(matches) * 10  # Weight config files more
+                    # Config files (already counted in required)
+                    if indicator not in required_indicators.get(lang, []):
+                        matches = [f for f in self.app_path.glob(indicator) if not should_exclude(f)]
+                        if not matches:
+                            matches = [f for f in self.app_path.glob(f'**/{indicator}') if not should_exclude(f)]
+                        score += len(matches) * 10
             
             if score > 0:
                 detected_languages[lang] = score
+                self.analysis[f'{lang}_file_count'] = source_file_count
         
         if detected_languages:
             primary_lang = max(detected_languages, key=detected_languages.get)
-            self.analysis['app_type'] = primary_lang
-            self.analysis['language_confidence'] = detected_languages
+            # Lower threshold - if has package manager file, it's valid
+            # Minimum score of 100 means at least one required file exists
+            if detected_languages[primary_lang] >= 100:
+                self.analysis['app_type'] = primary_lang
+                self.analysis['language_confidence'] = detected_languages
+            else:
+                self.analysis['app_type'] = 'unknown'
         else:
             self.analysis['app_type'] = 'unknown'
     
@@ -411,8 +513,11 @@ class EnhancedApplicationAnalyzer:
             
             self.analysis['framework'] = primary_framework['name']
             
-            # Use dynamic port detection instead of hardcoded values
+            # Use dynamic port detection with proper fallback
             detected_port = detect_port_with_fallback(str(self.app_path), primary_framework['name'])
+            # Fallback to framework default if detection returns 0 or None
+            if not detected_port or detected_port == 0:
+                detected_port = primary_framework.get('port', 3000)
             self.analysis['port'] = detected_port
             
             self.analysis['start_command'] = primary_framework['start_command']
@@ -562,6 +667,106 @@ class EnhancedApplicationAnalyzer:
                 if (self.app_path / main_file).exists():
                     self.analysis['entry_point'] = main_file
                     break
+        
+        # Detect language versions
+        self._detect_language_versions()
+    
+    def _detect_language_versions(self):
+        """Detect Python and Node.js versions from project configuration files."""
+        # Detect Python version
+        if self.analysis['app_type'] == 'python':
+            python_version = None
+            
+            # Check runtime.txt (Heroku style)
+            runtime_file = self.app_path / 'runtime.txt'
+            if runtime_file.exists():
+                try:
+                    with open(runtime_file, 'r') as f:
+                        content = f.read().strip()
+                        if content.startswith('python-'):
+                            python_version = content.replace('python-', '')
+                except Exception:
+                    pass
+            
+            # Check .python-version (pyenv)
+            pyenv_file = self.app_path / '.python-version'
+            if not python_version and pyenv_file.exists():
+                try:
+                    with open(pyenv_file, 'r') as f:
+                        python_version = f.read().strip()
+                except Exception:
+                    pass
+            
+            # Check pyproject.toml
+            pyproject = self.app_path / 'pyproject.toml'
+            if not python_version and pyproject.exists():
+                try:
+                    with open(pyproject, 'r') as f:
+                        content = f.read()
+                        # Look for python = "^3.x" or requires-python = ">=3.x"
+                        match = re.search(r'python.*?["\']([>=^~]*)(\d+\.\d+)', content)
+                        if match:
+                            python_version = match.group(2)
+                except Exception:
+                    pass
+            
+            # Check Pipfile
+            pipfile = self.app_path / 'Pipfile'
+            if not python_version and pipfile.exists():
+                try:
+                    with open(pipfile, 'r') as f:
+                        content = f.read()
+                        match = re.search(r'python_version.*?["\']([\d.]+)', content)
+                        if match:
+                            python_version = match.group(1)
+                except Exception:
+                    pass
+            
+            # Default to 3.11 if not found
+            self.analysis['language_version'] = python_version or '3.11'
+        
+        # Detect Node.js version
+        elif self.analysis['app_type'] == 'node':
+            node_version = None
+            
+            # Check .nvmrc
+            nvmrc_file = self.app_path / '.nvmrc'
+            if nvmrc_file.exists():
+                try:
+                    with open(nvmrc_file, 'r') as f:
+                        node_version = f.read().strip().replace('v', '')
+                except Exception:
+                    pass
+            
+            # Check package.json engines field
+            package_json = self.app_path / 'package.json'
+            if not node_version and package_json.exists():
+                try:
+                    with open(package_json, 'r') as f:
+                        pkg_data = json.load(f)
+                        engines = pkg_data.get('engines', {})
+                        node_spec = engines.get('node', '')
+                        # Extract version number from spec like ">=18.0.0" or "^20.0.0"
+                        match = re.search(r'([\d.]+)', node_spec)
+                        if match:
+                            version_str = match.group(1)
+                            # Get major version
+                            major = version_str.split('.')[0]
+                            node_version = major
+                except Exception:
+                    pass
+            
+            # Check .node-version
+            node_version_file = self.app_path / '.node-version'
+            if not node_version and node_version_file.exists():
+                try:
+                    with open(node_version_file, 'r') as f:
+                        node_version = f.read().strip().replace('v', '').split('.')[0]
+                except Exception:
+                    pass
+            
+            # Default to 20 if not found
+            self.analysis['language_version'] = node_version or '20'
     
     def _analyze_configurations(self):
         """Analyze configuration files."""

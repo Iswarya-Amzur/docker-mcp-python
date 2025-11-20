@@ -529,6 +529,106 @@ class EnhancedApplicationAnalyzer:
                 if (self.app_path / main_file).exists():
                     self.analysis['entry_point'] = main_file
                     break
+        
+        # Detect language versions
+        self._detect_language_versions()
+    
+    def _detect_language_versions(self):
+        """Detect Python and Node.js versions from project configuration files."""
+        # Detect Python version
+        if self.analysis['app_type'] == 'python':
+            python_version = None
+            
+            # Check runtime.txt (Heroku style)
+            runtime_file = self.app_path / 'runtime.txt'
+            if runtime_file.exists():
+                try:
+                    with open(runtime_file, 'r') as f:
+                        content = f.read().strip()
+                        if content.startswith('python-'):
+                            python_version = content.replace('python-', '')
+                except Exception:
+                    pass
+            
+            # Check .python-version (pyenv)
+            pyenv_file = self.app_path / '.python-version'
+            if not python_version and pyenv_file.exists():
+                try:
+                    with open(pyenv_file, 'r') as f:
+                        python_version = f.read().strip()
+                except Exception:
+                    pass
+            
+            # Check pyproject.toml
+            pyproject = self.app_path / 'pyproject.toml'
+            if not python_version and pyproject.exists():
+                try:
+                    with open(pyproject, 'r') as f:
+                        content = f.read()
+                        # Look for python = "^3.x" or requires-python = ">=3.x"
+                        match = re.search(r'python.*?["\']([>=^~]*)(\d+\.\d+)', content)
+                        if match:
+                            python_version = match.group(2)
+                except Exception:
+                    pass
+            
+            # Check Pipfile
+            pipfile = self.app_path / 'Pipfile'
+            if not python_version and pipfile.exists():
+                try:
+                    with open(pipfile, 'r') as f:
+                        content = f.read()
+                        match = re.search(r'python_version.*?["\']([\d.]+)', content)
+                        if match:
+                            python_version = match.group(1)
+                except Exception:
+                    pass
+            
+            # Default to 3.11 if not found
+            self.analysis['language_version'] = python_version or '3.11'
+        
+        # Detect Node.js version
+        elif self.analysis['app_type'] == 'node':
+            node_version = None
+            
+            # Check .nvmrc
+            nvmrc_file = self.app_path / '.nvmrc'
+            if nvmrc_file.exists():
+                try:
+                    with open(nvmrc_file, 'r') as f:
+                        node_version = f.read().strip().replace('v', '')
+                except Exception:
+                    pass
+            
+            # Check package.json engines field
+            package_json = self.app_path / 'package.json'
+            if not node_version and package_json.exists():
+                try:
+                    with open(package_json, 'r') as f:
+                        pkg_data = json.load(f)
+                        engines = pkg_data.get('engines', {})
+                        node_spec = engines.get('node', '')
+                        # Extract version number from spec like ">=18.0.0" or "^20.0.0"
+                        match = re.search(r'([\d.]+)', node_spec)
+                        if match:
+                            version_str = match.group(1)
+                            # Get major version
+                            major = version_str.split('.')[0]
+                            node_version = major
+                except Exception:
+                    pass
+            
+            # Check .node-version
+            node_version_file = self.app_path / '.node-version'
+            if not node_version and node_version_file.exists():
+                try:
+                    with open(node_version_file, 'r') as f:
+                        node_version = f.read().strip().replace('v', '').split('.')[0]
+                except Exception:
+                    pass
+            
+            # Default to 20 if not found
+            self.analysis['language_version'] = node_version or '20'
     
     def _analyze_configurations(self):
         """Analyze configuration files."""

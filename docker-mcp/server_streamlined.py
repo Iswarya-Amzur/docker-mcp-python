@@ -103,6 +103,7 @@ def test_application_e2e(
     
     What it does:
     - Checks if containers are running (starts them if needed)
+    - **DETECTS PORTS AUTOMATICALLY** from your code if not specified
     - Waits for services to be ready
     - Launches VISIBLE browser window (Chromium)
     - Loads your application
@@ -125,8 +126,8 @@ def test_application_e2e(
     
     Args:
         project_root: Root directory with docker-compose.yml
-        backend_port: Backend port (default: 8000)
-        frontend_port: Frontend port (default: 3000)
+        backend_port: Backend port (auto-detected if not provided)
+        frontend_port: Frontend port (auto-detected if not provided)
         cleanup: Stop containers after test (default: False - keeps running)
         headless: Run browser in headless mode (default: False - shows browser)
     
@@ -144,10 +145,97 @@ def test_application_e2e(
     """
     try:
         logger.info(f"Launching and testing application at {project_root}")
+        
+        # Auto-detect ports if not provided
+        if backend_port is None or frontend_port is None:
+            logger.info("🔍 Auto-detecting ports from project services...")
+            try:
+                # First check docker-compose.yml for running container ports
+                detected_backend = backend_port
+                detected_frontend = frontend_port
+                
+                compose_file = os.path.join(project_root, 'docker-compose.yml')
+                if os.path.exists(compose_file):
+                    try:
+                        import yaml
+                        with open(compose_file, 'r') as f:
+                            compose_data = yaml.safe_load(f)
+                            if compose_data and 'services' in compose_data:
+                                for svc_name, svc_config in compose_data['services'].items():
+                                    ports = svc_config.get('ports', [])
+                                    for port_mapping in ports:
+                                        if isinstance(port_mapping, str):
+                                            # Format: "5173:5173" or "5173:80"
+                                            host_port = port_mapping.split(':')[0]
+                                            try:
+                                                host_port_num = int(host_port)
+                                                logger.info(f"   Found port {host_port_num} in docker-compose for '{svc_name}'")
+                                                
+                                                if 'frontend' in svc_name.lower() or 'client' in svc_name.lower() or 'web' in svc_name.lower():
+                                                    if detected_frontend is None:
+                                                        detected_frontend = host_port_num
+                                                        logger.info(f"   ✅ Using port {host_port_num} for frontend from docker-compose")
+                                                elif 'backend' in svc_name.lower() or 'api' in svc_name.lower() or 'server' in svc_name.lower():
+                                                    if detected_backend is None:
+                                                        detected_backend = host_port_num
+                                                        logger.info(f"   ✅ Using port {host_port_num} for backend from docker-compose")
+                                            except ValueError:
+                                                pass
+                    except Exception as e:
+                        logger.warning(f"Could not parse docker-compose.yml: {e}")
+                
+                # Then check service analysis if still not found
+                detection_result = detect_services(project_root)
+                services = detection_result.get('application_services', {})
+                
+                if detected_backend is None:
+                    detected_backend = 8000
+                if detected_frontend is None:
+                    detected_frontend = 3000
+                
+                for name, service_info in services.items():
+                    analysis = service_info.get('analysis', {})
+                    detected_port = analysis.get('port') or service_info.get('port')
+                    
+                    if detected_port:
+                        logger.info(f"   Found port {detected_port} for service '{name}'")
+                        
+                        # Categorize services
+                        if name.lower() in ['backend', 'api', 'server'] or 'backend' in name.lower():
+                            if backend_port is None:
+                                detected_backend = detected_port
+                                logger.info(f"   ✅ Using port {detected_port} for backend")
+                        elif name.lower() in ['frontend', 'client', 'web', 'ui'] or 'frontend' in name.lower():
+                            if frontend_port is None:
+                                detected_frontend = detected_port
+                                logger.info(f"   ✅ Using port {detected_port} for frontend")
+                        elif len(services) == 1:
+                            # Single service app
+                            app_type = service_info.get('language', '').lower()
+                            if app_type in ['node', 'javascript', 'typescript']:
+                                if frontend_port is None:
+                                    detected_frontend = detected_port
+                                    logger.info(f"   ✅ Using port {detected_port} for frontend (Node.js)")
+                            else:
+                                if backend_port is None:
+                                    detected_backend = detected_port
+                                    logger.info(f"   ✅ Using port {detected_port} for backend")
+                
+                # Use detected ports (docker-compose takes priority, already set above)
+                backend_port = detected_backend
+                frontend_port = detected_frontend
+                
+                logger.info(f"🌐 Final detected ports: backend={backend_port}, frontend={frontend_port}")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Port detection failed, using defaults: {e}")
+                backend_port = backend_port or 8000
+                frontend_port = frontend_port or 3000
+        
         result = launch_and_test(
             project_root,
-            backend_port or 8000,
-            frontend_port or 3000,
+            backend_port,
+            frontend_port,
             cleanup if cleanup is not None else False,
             headless if headless is not None else False,
             show_browser=True,  # Always show browser
