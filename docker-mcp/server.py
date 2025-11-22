@@ -38,16 +38,11 @@ from docker_tools.comprehensive_workflow_async import (
     detect_database_services,
     validate_dockerfile
 )
-# Import sync functions still used by some tools
-from docker_tools.comprehensive_workflow import (
-    capture_screenshot,
-    analyze_screenshot,
-    display_screenshot,
-    view_application_logs
-)
+
+import sys
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
 
 # Initialize MCP server
@@ -63,7 +58,9 @@ async def dockerize_and_test(
     project_root: str,
     test_e2e: Optional[bool] = True,
     monitor_logs: Optional[bool] = False,
-    auto_fix_errors: Optional[bool] = True
+    auto_fix_errors: Optional[bool] = True,
+    parallel_builds: Optional[bool] = True,
+    max_retries: Optional[int] = 3
 ) -> dict:
     """
     🎯 ULTIMATE COMPREHENSIVE TOOL - Complete Async Workflow Orchestrator
@@ -82,13 +79,15 @@ async def dockerize_and_test(
     This tool handles EVERYTHING automatically using ASYNC Playwright:
     
     1. ✅ Analyzes codebase and detects ALL services (including databases)
-    2. ✅ Creates/validates Docker files (checks if they exist, validates them)
-    3. ✅ Builds containers and launches application
-    4. ✅ Performs REAL browser interactions using direct Playwright library
-    5. ✅ Captures screenshots during testing (as evidence)
-    6. ✅ Tests application end-to-end with actual Playwright automation
-    7. ✅ Sets up Grafana monitoring (if requested)
-    8. ✅ Automatically fixes any errors encountered
+    2. ✅ Analyzes dependencies and auto-adds missing packages (NEW)
+    3. ✅ Creates/validates Docker files (checks if they exist, validates them)
+    4. ✅ Builds containers in parallel with automatic retry (NEW)
+    5. ✅ Automatically fixes common errors (Dockerfile, dependencies, ports) (ENHANCED)
+    6. ✅ Launches application and waits for health checks
+    7. ✅ Performs REAL browser interactions using direct Playwright library
+    8. ✅ Captures screenshots during testing (as evidence)
+    9. ✅ Tests application end-to-end with actual Playwright automation
+    10. ✅ Sets up Grafana monitoring (if requested)
     
     Perfect for:
     - "dockerize this application and test it"
@@ -101,6 +100,8 @@ async def dockerize_and_test(
         test_e2e: Run end-to-end tests with browser interactions (default: True)
         monitor_logs: Set up Grafana monitoring (default: False)
         auto_fix_errors: Automatically fix errors encountered (default: True)
+        parallel_builds: Build services in parallel for faster builds (default: True) (NEW)
+        max_retries: Maximum retry attempts per service (default: 3) (NEW)
     
     Returns:
         Dict with:
@@ -111,17 +112,19 @@ async def dockerize_and_test(
         - tests: Test results
         
     Example:
-        dockerize_and_test(project_root="C:\\MyApp", test_e2e=True)
+        dockerize_and_test(project_root="C:\\MyApp", test_e2e=True, parallel_builds=True)
         
         Result: Complete workflow with REAL browser interactions and BASE64 screenshots!
     """
     try:
-        logger.info(f"Running ASYNC comprehensive workflow for {project_root}")
+        logger.info(f"Running ENHANCED ASYNC comprehensive workflow for {project_root}")
         result = await comprehensive_dockerize_and_test_async(
             project_root,
             test_e2e=test_e2e if test_e2e is not None else True,
             monitor_logs=monitor_logs if monitor_logs is not None else False,
-            auto_fix_errors=auto_fix_errors if auto_fix_errors is not None else True
+            auto_fix_errors=auto_fix_errors if auto_fix_errors is not None else True,
+            parallel_builds=parallel_builds if parallel_builds is not None else True,
+            max_retries=max_retries if max_retries is not None else 3
         )
         
         # Return result directly - Playwright MCP handles screenshot format

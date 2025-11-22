@@ -30,7 +30,9 @@ from .e2e_tester_async import (
     start_docker_compose_async,
     wait_for_services_async
 )
-from .error_fixer import fix_containerization_errors
+from .error_fixer import fix_containerization_errors, EnhancedErrorFixer
+from .build_orchestrator import BuildOrchestrator, build_services_parallel
+from .dependency_resolver import DependencyResolver, analyze_dependencies
 
 
 def detect_database_services(project_root: str) -> Dict[str, Dict]:
@@ -144,25 +146,29 @@ async def comprehensive_dockerize_and_test_async(
     project_root: str, 
     test_e2e: bool = True,
     monitor_logs: bool = False,
-    auto_fix_errors: bool = True
+    auto_fix_errors: bool = True,
+    parallel_builds: bool = True,
+    max_retries: int = 3
 ) -> dict:
     """
-    ASYNC Comprehensive workflow that handles the entire dockerization and testing process.
+    ENHANCED ASYNC Comprehensive workflow with intelligent error fixing and parallel builds.
     
     This is the main orchestrator function that:
     1. Analyzes the codebase and detects all services (including databases)
-    2. Creates/validates Docker files
-    3. Builds containers and launches application
-    4. Captures screenshots and tests end-to-end (RETURNS BASE64)
-    5. Sets up Grafana monitoring (if requested)
-    6. Views logs
-    7. Fixes any errors encountered
+    2. Analyzes dependencies and auto-adds missing ones
+    3. Creates/validates Docker files
+    4. Builds containers in parallel with automatic retry
+    5. Applies automatic fixes for common errors
+    6. Launches application and tests end-to-end
+    7. Sets up Grafana monitoring (if requested)
     
     Args:
         project_root: Root directory of the project
         test_e2e: Whether to run end-to-end tests
         monitor_logs: Whether to set up Grafana monitoring
-        auto_fix_errors: Whether to automatically fix errors
+        auto_fix_errors: Whether to automatically fix errors (NEW)
+        parallel_builds: Whether to build services in parallel (NEW)
+        max_retries: Maximum retry attempts per service (NEW)
         
     Returns:
         Dict with report text and base64 screenshots
@@ -222,6 +228,65 @@ async def comprehensive_dockerize_and_test_async(
         services = {}
         databases = {}
         detection_result = {'application_services': {}}
+    
+    # STEP 1.5: Analyze Dependencies (NEW)
+    report += "=" * 70 + "\n"
+    report += "**STEP 1.5: Analyzing Dependencies...**\n\n"
+    
+    try:
+        dep_resolver = DependencyResolver(project_root)
+        dep_analysis = dep_resolver.analyze_project()
+        
+        if dep_analysis["missing_in_requirements"]:
+            report += f"📦 Found {len(dep_analysis['missing_in_requirements'])} missing Python packages:\n"
+            for pkg in dep_analysis['missing_in_requirements'][:10]:
+                report += f"   - {pkg}\n"
+            if len(dep_analysis['missing_in_requirements']) > 10:
+                report += f"   ... and {len(dep_analysis['missing_in_requirements']) - 10} more\n"
+            
+            if auto_fix_errors:
+                report += "\n🔧 Auto-adding missing packages to requirements.txt...\n"
+                # Add missing packages
+                for pkg in dep_analysis['missing_in_requirements']:
+                    try:
+                        fixer = EnhancedErrorFixer(project_root)
+                        fixer._add_python_dependency(pkg)
+                        report += f"   ✅ Added {pkg}\n"
+                    except Exception as e:
+                        report += f"   ⚠️  Could not add {pkg}: {e}\n"
+        else:
+            report += "✅ All Python dependencies are in requirements.txt\n"
+        
+        if dep_analysis["missing_in_package_json"]:
+            report += f"\n📦 Found {len(dep_analysis['missing_in_package_json'])} missing npm packages:\n"
+            for pkg in dep_analysis['missing_in_package_json'][:10]:
+                report += f"   - {pkg}\n"
+            if len(dep_analysis['missing_in_package_json']) > 10:
+                report += f"   ... and {len(dep_analysis['missing_in_package_json']) - 10} more\n"
+            
+            if auto_fix_errors:
+                report += "\n🔧 Auto-adding missing packages to package.json...\n"
+                for pkg in dep_analysis['missing_in_package_json']:
+                    try:
+                        fixer = EnhancedErrorFixer(project_root)
+                        fixer._add_npm_dependency(pkg)
+                        report += f"   ✅ Added {pkg}\n"
+                    except Exception as e:
+                        report += f"   ⚠️  Could not add {pkg}: {e}\n"
+        else:
+            if dep_analysis.get("npm_packages"):
+                report += "\n✅ All npm dependencies are in package.json\n"
+        
+        if dep_analysis["system_dependencies"]:
+            report += f"\n🔧 System dependencies needed:\n"
+            for dep in dep_analysis["system_dependencies"]:
+                report += f"   - {dep}\n"
+            report += "   (These will be added to Dockerfile)\n"
+        
+        report += "\n"
+    except Exception as e:
+        report += f"⚠️  Error during dependency analysis: {str(e)}\n\n"
+        dep_analysis = {}
     
     # STEP 2: Check/Create Docker files
     report += "=" * 70 + "\n"
