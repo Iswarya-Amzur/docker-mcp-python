@@ -920,23 +920,47 @@ def generate_docker_compose(project_root: str, services: dict) -> str:
         
         service_type = service_info.get('framework', service_info.get('type', 'unknown'))
         
-        # Use port from analysis if available, otherwise use framework-based defaults
+        # PRIORITY 1: Use detected port from analysis (MOST ACCURATE)
         analysis = service_info.get('analysis', {})
         detected_port = analysis.get('port')
         
-        if detected_port:
+        # PRIORITY 2: Use framework-specific default ports
+        framework = service_info.get('framework', '').lower()
+        framework_defaults = {
+            'vite': 5173,
+            'react': 3000,
+            'vue': 8080,
+            'angular': 4200,
+            'next': 3000,
+            'fastapi': 8000,
+            'flask': 5000,
+            'django': 8000,
+            'express': 3000
+        }
+        
+        if detected_port and detected_port != 0:
+            # Use detected port - highest priority
             container_port = detected_port
             host_port = detected_port
+        elif framework in framework_defaults:
+            # Use framework default
+            container_port = framework_defaults[framework]
+            host_port = container_port
         else:
-            # Use service name-based mapping or fallback to old logic
+            # PRIORITY 3: Use service name-based mapping or fallback
             container_port = port_mappings.get(service_name.lower(), 
                                              8000 if service_type == 'python' else 3000)
             host_port = container_port
         
-        # Resolve port conflicts by incrementing host port
+        # Resolve port conflicts by incrementing host port ONLY (keep container port unchanged)
+        original_host_port = host_port
         while host_port in used_ports:
             host_port += 1
         used_ports.add(host_port)
+        
+        # Log if port was changed due to conflict
+        if host_port != original_host_port:
+            print(f"⚠️  Port conflict: {service_name} port {original_host_port} → {host_port}")
         
         # Determine the CMD based on service type and use dynamic port
         if service_type == 'python':

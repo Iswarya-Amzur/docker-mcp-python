@@ -237,6 +237,26 @@ async def comprehensive_dockerize_and_test_async(
         dep_resolver = DependencyResolver(project_root)
         dep_analysis = dep_resolver.analyze_project()
         
+        # Report detected framework and production server
+        if dep_analysis.get("python_packages"):
+            framework = None
+            for result in dep_analysis.values():
+                if isinstance(result, dict) and "framework" in result:
+                    framework = result.get("framework")
+                    break
+            
+            if framework:
+                server_map = {
+                    'fastapi': 'uvicorn (ASGI)',
+                    'starlette': 'uvicorn (ASGI)', 
+                    'sanic': 'uvicorn (ASGI)',
+                    'quart': 'uvicorn (ASGI)',
+                    'django': 'gunicorn (WSGI)',
+                    'flask': 'gunicorn (WSGI)'
+                }
+                server = server_map.get(framework, 'default server')
+                report += f"🔍 Detected framework: **{framework}** → Using **{server}**\n\n"
+        
         if dep_analysis["missing_in_requirements"]:
             report += f"📦 Found {len(dep_analysis['missing_in_requirements'])} missing Python packages:\n"
             for pkg in dep_analysis['missing_in_requirements'][:10]:

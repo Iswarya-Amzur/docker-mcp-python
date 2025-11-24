@@ -103,7 +103,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
 
 # Copy and install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --user -r requirements.txt && \\
+    pip install --no-cache-dir --user gunicorn
 
 # Production stage
 FROM python:{python_version}-slim
@@ -159,7 +160,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
 
 # Copy and install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --user -r requirements.txt && \\
+    pip install --no-cache-dir --user uvicorn[standard]
 
 # Production stage
 FROM python:{python_version}-slim
@@ -207,7 +209,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
 
 # Copy and install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --user -r requirements.txt && \\
+    pip install --no-cache-dir --user gunicorn
 
 # Production stage
 FROM python:{python_version}-slim

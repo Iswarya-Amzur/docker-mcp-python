@@ -202,35 +202,46 @@ def _detect_frontend_ports(app_path: Path) -> Dict:
             # Check scripts
             scripts = pkg_data.get('scripts', {})
             for script_name, script_cmd in scripts.items():
-                if any(cmd in script_cmd for cmd in ['serve', 'dev', 'start', 'ng serve']):
+                if any(cmd in script_cmd for cmd in ['serve', 'dev', 'start', 'ng serve', 'vite']):
                     port_matches = re.findall(r'(?:--port|PORT=|-p|:)[\s=]*(\d+)', script_cmd)
                     for port in port_matches:
+                        confidence = 25 if 'vite' in script_cmd else 20
                         ports[int(port)] = {
-                            'confidence': 20,
+                            'confidence': confidence,
                             'source': f'package.json:{script_name}'
                         }
+            
+            # Check for Vite in dependencies - if found, boost 5173
+            all_deps = {**pkg_data.get('dependencies', {}), **pkg_data.get('devDependencies', {})}
+            if 'vite' in all_deps and 5173 not in ports:
+                ports[5173] = {
+                    'confidence': 25,
+                    'source': 'Vite default (from package.json)'
+                }
         except Exception:
             pass
     
-    # Check configuration files
+    # Check configuration files with enhanced patterns
     config_files = {
-        'vite.config.js': r'port\s*:\s*(\d+)',
-        'vite.config.ts': r'port\s*:\s*(\d+)',
-        'webpack.config.js': r'port\s*:\s*(\d+)',
-        'angular.json': r'"port"\s*:\s*(\d+)',
-        'vue.config.js': r'port\s*:\s*(\d+)',
-        'next.config.js': r'port\s*:\s*(\d+)',
+        'vite.config.js': [r'port\s*:\s*(\d+)', r'server\s*:\s*{[^}]*port\s*:\s*(\d+)'],
+        'vite.config.ts': [r'port\s*:\s*(\d+)', r'server\s*:\s*{[^}]*port\s*:\s*(\d+)'],
+        'webpack.config.js': [r'port\s*:\s*(\d+)', r'devServer\s*:\s*{[^}]*port\s*:\s*(\d+)'],
+        'angular.json': [r'"port"\s*:\s*(\d+)'],
+        'vue.config.js': [r'port\s*:\s*(\d+)', r'devServer\s*:\s*{[^}]*port\s*:\s*(\d+)'],
+        'next.config.js': [r'port\s*:\s*(\d+)'],
     }
     
-    for config_file, pattern in config_files.items():
+    for config_file, patterns in config_files.items():
         for file_path in app_path.glob(f'**/{config_file}'):
             if file_path.is_file():
-                found_ports = _scan_file_for_ports(file_path, [pattern])
-                for port, confidence in found_ports.items():
-                    ports[port] = {
-                        'confidence': confidence + 15,  # Config file bonus
-                        'source': f'Config:{file_path.name}'
-                    }
+                for pattern in patterns:
+                    found_ports = _scan_file_for_ports(file_path, [pattern])
+                    for port, confidence in found_ports.items():
+                        bonus = 25 if 'vite' in config_file else 15
+                        ports[port] = {
+                            'confidence': confidence + bonus,
+                            'source': f'Config:{file_path.name}'
+                        }
     
     return ports
 
@@ -330,8 +341,12 @@ def _scan_file_for_ports(file_path: Path, patterns: List[str]) -> Dict:
                         confidence = 10
                         
                         # Boost confidence for common development ports
-                        if port in [3000, 3001, 4000, 5000, 8000, 8080, 8888, 9000]:
+                        if port in [3000, 3001, 4000, 5000, 5173, 8000, 8080, 8888, 9000]:
                             confidence += 5
+                        
+                        # Extra boost for framework-specific ports
+                        if port == 5173:  # Vite default
+                            confidence += 10
                         
                         # Boost confidence for multiple occurrences
                         occurrences = len(re.findall(rf'\b{port}\b', content))

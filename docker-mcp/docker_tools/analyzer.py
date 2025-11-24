@@ -126,13 +126,15 @@ class EnhancedApplicationAnalyzer:
                     'flask': {
                         'files': ['app.py', 'application.py', 'main.py'],
                         'imports': ['flask', 'Flask'],
+                        'deps': ['flask'],
                         'configs': ['config.py'],
                         'port': 5000,
                         'start_cmd': 'python app.py'
                     },
                     'fastapi': {
                         'files': ['main.py', 'app.py', 'api.py'],
-                        'imports': ['fastapi', 'FastAPI'],
+                        'imports': ['fastapi', 'FastAPI', 'APIRouter'],
+                        'deps': ['fastapi', 'uvicorn'],
                         'port': 8000,
                         'start_cmd': 'uvicorn main:app --host 0.0.0.0 --port 8000'
                     },
@@ -487,6 +489,24 @@ class EnhancedApplicationAnalyzer:
             # Handle special cases: prioritize Vite over Express for React apps
             primary_framework = detected_frameworks[0]
             
+            # CRITICAL: Prioritize FastAPI over Flask when both detected
+            # FastAPI and Flask have overlapping file patterns, but FastAPI is more specific
+            fastapi_frameworks = [f for f in detected_frameworks if f['name'] == 'fastapi']
+            flask_frameworks = [f for f in detected_frameworks if f['name'] == 'flask']
+            
+            if fastapi_frameworks and flask_frameworks:
+                # Check for FastAPI-specific indicators
+                has_fastapi_imports = self._has_specific_imports(['fastapi', 'FastAPI', 'APIRouter', 'Depends'])
+                has_uvicorn_in_deps = self._has_dependency('uvicorn')
+                
+                if has_fastapi_imports or has_uvicorn_in_deps:
+                    primary_framework = fastapi_frameworks[0]
+                    # Boost FastAPI confidence
+                    primary_framework['confidence'] += 50
+                else:
+                    # Default to Flask if no FastAPI-specific indicators
+                    primary_framework = flask_frameworks[0]
+            
             # If we detect both Express and Vite/React, choose based on project structure
             vite_frameworks = [f for f in detected_frameworks if f['name'] == 'vite']
             react_frameworks = [f for f in detected_frameworks if f['name'] == 'react']
@@ -539,19 +559,63 @@ class EnhancedApplicationAnalyzer:
                 matches = list(self.app_path.glob(f'**/{dir_pattern}'))
                 score += len(matches) * 15
         
-        # Check for imports in code files
+        # Check for imports in code files (HIGHER WEIGHT for accuracy)
         if 'imports' in pattern:
-            score += self._check_imports(pattern['imports']) * 10
+            score += self._check_imports(pattern['imports']) * 30
         
-        # Check for dependencies
+        # Check for dependencies (CRITICAL for distinguishing frameworks)
         if 'deps' in pattern:
-            score += self._check_dependencies(pattern['deps']) * 25
+            score += self._check_dependencies(pattern['deps']) * 40
         
         # Check for markers in build files
         if 'markers' in pattern:
             score += self._check_build_markers(pattern['markers']) * 15
         
         return score
+    
+    def _has_specific_imports(self, imports: List[str]) -> bool:
+        """Check if specific imports exist in code files (case-sensitive)."""
+        code_files = list(self.app_path.glob('**/*.py'))[:20]  # Check up to 20 files
+        
+        for code_file in code_files:
+            try:
+                with open(code_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    for import_name in imports:
+                        # Case-sensitive check for better accuracy
+                        if re.search(rf'import\s+{re.escape(import_name)}|from\s+\S*\s+import\s+.*{re.escape(import_name)}', content):
+                            return True
+            except Exception:
+                pass
+        
+        return False
+    
+    def _has_dependency(self, dep_name: str) -> bool:
+        """Check if a specific dependency exists in requirements.txt or package.json."""
+        # Check requirements.txt
+        req_file = self.app_path / 'requirements.txt'
+        if req_file.exists():
+            try:
+                with open(req_file, 'r') as f:
+                    content = f.read().lower()
+                    if dep_name.lower() in content:
+                        return True
+            except Exception:
+                pass
+        
+        # Check package.json
+        package_json = self.app_path / 'package.json'
+        if package_json.exists():
+            try:
+                with open(package_json, 'r') as f:
+                    pkg_data = json.load(f)
+                    all_deps = {**pkg_data.get('dependencies', {}), **pkg_data.get('devDependencies', {})}
+                    if dep_name in all_deps:
+                        return True
+            except Exception:
+                pass
+        
+        return False
     
     def _check_imports(self, imports: List[str]) -> int:
         """Check for import statements in code files."""

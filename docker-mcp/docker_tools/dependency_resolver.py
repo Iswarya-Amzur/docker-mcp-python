@@ -135,6 +135,13 @@ class DependencyResolver:
             if package_name in self.SYSTEM_DEPENDENCIES:
                 system_deps.update(self.SYSTEM_DEPENDENCIES[package_name])
         
+        # Detect framework and ensure production server is included
+        framework = self._detect_python_framework(imports)
+        if framework:
+            server_package = self._get_production_server_for_framework(framework)
+            if server_package:
+                packages.add(server_package)
+        
         # Check what's missing from requirements.txt
         existing_packages = self._read_requirements_txt()
         missing = packages - existing_packages
@@ -142,7 +149,8 @@ class DependencyResolver:
         return {
             "packages": sorted(list(packages)),
             "missing": sorted(list(missing)),
-            "system_deps": sorted(list(system_deps))
+            "system_deps": sorted(list(system_deps)),
+            "framework": framework
         }
     
     def _find_python_imports(self) -> Set[str]:
@@ -184,6 +192,43 @@ class DependencyResolver:
                     pass
         
         return imports
+    
+    def _detect_python_framework(self, imports: Set[str]) -> Optional[str]:
+        """Detect Python web framework from imports."""
+        framework_indicators = {
+            'fastapi': ['fastapi'],
+            'django': ['django'],
+            'flask': ['flask'],
+            'sanic': ['sanic'],
+            'quart': ['quart'],
+            'aiohttp': ['aiohttp'],
+            'tornado': ['tornado'],
+            'starlette': ['starlette']
+        }
+        
+        for framework, indicators in framework_indicators.items():
+            for indicator in indicators:
+                if indicator in imports or any(imp.startswith(f"{indicator}.") for imp in imports):
+                    return framework
+        
+        return None
+    
+    def _get_production_server_for_framework(self, framework: str) -> Optional[str]:
+        """Get the appropriate production server package for a framework."""
+        # ASGI frameworks (async) use uvicorn
+        asgi_frameworks = {'fastapi', 'starlette', 'sanic', 'quart', 'aiohttp'}
+        # WSGI frameworks (sync) use gunicorn  
+        wsgi_frameworks = {'django', 'flask'}
+        
+        if framework in asgi_frameworks:
+            return 'uvicorn'
+        elif framework in wsgi_frameworks:
+            return 'gunicorn'
+        elif framework == 'tornado':
+            # Tornado has its own server
+            return None
+        
+        return None
     
     def _is_stdlib(self, module_name: str) -> bool:
         """Check if module is part of Python standard library."""
