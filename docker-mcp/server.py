@@ -154,7 +154,7 @@ async def dockerize_and_test(
 
 # Tool 1: Dockerize Complete Project (MAIN TOOL)
 @mcp.tool()
-def dockerize_project(project_root: str) -> str:
+def dockerize_project(project_root: str, auto_start: bool = False) -> str:
     """
     🎯 PRIMARY DOCKERIZATION TOOL
     
@@ -164,10 +164,7 @@ def dockerize_project(project_root: str) -> str:
     - Analyzes each service (dependencies, framework, entry points)
     - Generates optimized Dockerfiles for each service
     - Creates docker-compose.yml for orchestration
-    - Builds all Docker images
-    - Starts all containers
-    - Waits for services to be ready
-    - Provides URLs to access your application
+    - Optionally builds and starts containers (if auto_start=True)
     
     Works with:
     - Multi-service projects (backend + frontend)
@@ -178,23 +175,25 @@ def dockerize_project(project_root: str) -> str:
     
     Args:
         project_root: Root directory of your project
+        auto_start: Automatically build and start containers (default: False)
+                   Set to True to build and start, False to only generate files
     
     Returns:
         Complete dockerization report with:
         - Detected services
         - Generated files
-        - Build status
-        - Running container URLs
+        - Build status (if auto_start=True)
+        - Running container URLs (if auto_start=True)
         
     Example:
-        dockerize_project(project_root="C:\\MyApp")
+        dockerize_project(project_root="C:\\MyApp", auto_start=False)
         
-        Result: Application fully dockerized, built, and running!
-        Access at: http://localhost:3000 (frontend), http://localhost:8000 (backend)
+        Result: Dockerfiles and docker-compose.yml generated!
+        To start: docker-compose up --build
     """
     try:
-        logger.info(f"Dockerizing full project at {project_root}")
-        result = dockerize_full_project(project_root, auto_start=True)
+        logger.info(f"Dockerizing full project at {project_root} (auto_start={auto_start})")
+        result = dockerize_full_project(project_root, auto_start=auto_start)
         return result
     except Exception as e:
         return f"Error dockerizing project: {str(e)}"

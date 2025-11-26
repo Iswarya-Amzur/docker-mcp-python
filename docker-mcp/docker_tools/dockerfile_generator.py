@@ -10,7 +10,58 @@ Generates optimized, production-ready Dockerfiles for all major frameworks:
 """
 
 import os
+import json
 from typing import Optional
+
+
+def _detect_start_command(app_path: str) -> Optional[str]:
+    """
+    Detect the start command from package.json.
+    
+    Args:
+        app_path: Path to application directory
+        
+    Returns:
+        Start command string or None
+    """
+    package_json_path = os.path.join(app_path, 'package.json')
+    if not os.path.exists(package_json_path):
+        return None
+    
+    try:
+        with open(package_json_path, 'r', encoding='utf-8') as f:
+            package_data = json.load(f)
+            
+        scripts = package_data.get('scripts', {})
+        
+        # Check for start script (production)
+        if 'start' in scripts:
+            return scripts['start']
+        
+        # Fallback to dev if no start script
+        if 'dev' in scripts:
+            return scripts['dev']
+            
+    except Exception as e:
+        pass
+    
+    return None
+
+
+def _check_env_file_exists(app_path: str) -> Optional[str]:
+    """
+    Check if .env file exists in the application directory.
+    
+    Args:
+        app_path: Path to application directory
+        
+    Returns:
+        .env file name if exists, None otherwise
+    """
+    for env_file in ['.env', '.env.local', '.env.development', '.env.production']:
+        if os.path.exists(os.path.join(app_path, env_file)):
+            return env_file
+    return None
 
 
 def generate_dockerfile(app_path: str, analysis: dict = None, 
@@ -146,7 +197,8 @@ CMD ["gunicorn", "--bind", "0.0.0.0:{analysis.get('port', 8000)}", "--workers", 
 
 def _generate_fastapi_dockerfile(app_path: str, analysis: dict, python_version: str) -> str:
     """Generate optimized Dockerfile for FastAPI applications."""
-    entry_point = analysis.get('entry_point', 'main.py').replace('.py', '')
+    entry_point = analysis.get('entry_point', 'main.py') or 'main.py'
+    entry_point = entry_point.replace('.py', '')
     
     return f"""# Multi-stage build for FastAPI
 FROM python:{python_version}-slim as builder
@@ -168,30 +220,30 @@ FROM python:{python_version}-slim
 
 WORKDIR /app
 
-# Create non-root user
+# Create non-root user first
 RUN useradd -m -u 1000 appuser
 
 # Copy Python packages from builder
 COPY --from=builder /root/.local /home/appuser/.local
 
-# Copy application code
-COPY --chown=appuser:appuser . .
-
 # Set PATH for user-installed packages
 ENV PATH=/home/appuser/.local/bin:$PATH
 
-# Switch to non-root user
+# Copy application code WITH proper ownership
+COPY --chown=appuser:appuser . .
+
+# Switch to non-root user AFTER copying files
 USER appuser
 
 # Expose port
 EXPOSE {analysis.get('port', 8000)}
 
-# Health check
+# Health check (no external dependencies)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \\
-    CMD python -c "import requests; requests.get('http://localhost:{analysis.get('port', 8000)}/health', timeout=2)" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:{analysis.get('port', 8000)}/health', timeout=2)" || exit 1
 
-# Run with uvicorn
-CMD ["uvicorn", "{entry_point}:app", "--host", "0.0.0.0", "--port", "{analysis.get('port', 8000)}", "--workers", "4"]
+# Run with uvicorn (using entry point from analysis)
+CMD ["uvicorn", "{entry_point}:app", "--host", "0.0.0.0", "--port", "{analysis.get('port', 8000)}"]
 """
 
 
@@ -217,32 +269,32 @@ FROM python:{python_version}-slim
 
 WORKDIR /app
 
-# Create non-root user
+# Create non-root user first
 RUN useradd -m -u 1000 appuser
 
 # Copy Python packages from builder
 COPY --from=builder /root/.local /home/appuser/.local
-
-# Copy application code
-COPY --chown=appuser:appuser . .
 
 # Set PATH and Flask environment
 ENV PATH=/home/appuser/.local/bin:$PATH \\
     FLASK_APP=app.py \\
     FLASK_ENV=production
 
-# Switch to non-root user
+# Copy application code WITH proper ownership
+COPY --chown=appuser:appuser . .
+
+# Switch to non-root user AFTER copying files
 USER appuser
 
 # Expose port
 EXPOSE {analysis.get('port', 5000)}
 
-# Health check
+# Health check (no external dependencies)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \\
-    CMD python -c "import requests; requests.get('http://localhost:{analysis.get('port', 5000)}/health', timeout=2)" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:{analysis.get('port', 5000)}/health', timeout=2)" || exit 1
 
-# Run with gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:{analysis.get('port', 5000)}", "--workers", "4", "app:app"]
+# Run with gunicorn - detect app location
+CMD ["sh", "-c", "if [ -f app.py ]; then gunicorn --bind 0.0.0.0:{analysis.get('port', 5000)} --workers 4 app:app; elif [ -f main.py ]; then gunicorn --bind 0.0.0.0:{analysis.get('port', 5000)} --workers 4 main:app; else gunicorn --bind 0.0.0.0:{analysis.get('port', 5000)} --workers 4 application:app; fi"]
 """
 
 
@@ -291,11 +343,12 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Copy necessary files
+# Copy necessary files WITH proper ownership
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Switch to non-root user
 USER nextjs
 
 EXPOSE {analysis.get('port', 3000)}
@@ -303,9 +356,9 @@ EXPOSE {analysis.get('port', 3000)}
 ENV PORT={analysis.get('port', 3000)}
 ENV HOSTNAME="0.0.0.0"
 
-# Health check
+# Health check (use 127.0.0.1 instead of localhost)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \\
-    CMD node -e "require('http').get('http://localhost:{analysis.get('port', 3000)}', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
+    CMD node -e "require('http').get('http://127.0.0.1:{analysis.get('port', 3000)}', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
 
 CMD ["node", "server.js"]
 """
@@ -399,17 +452,17 @@ def _generate_vite_dockerfile(app_path: str, analysis: dict, node_version: str) 
 
 WORKDIR /app
 
+# Create non-root user first
 RUN addgroup -g 1001 -S nodejs && adduser -S nodeuser -u 1001
 
-# Copy package files
+# Copy package files and install as root for proper permissions
 COPY package*.json ./
-
-# Install dependencies (including dev dependencies for Vite)
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi && npm cache clean --force
 
-# Copy source code
+# Copy source code WITH proper ownership BEFORE switching user
 COPY --chown=nodeuser:nodejs . .
 
+# Switch to non-root user AFTER all files are copied
 USER nodeuser
 
 # Expose the Vite development server port
@@ -422,6 +475,15 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "{detected_port}"
 
 def _generate_nestjs_dockerfile(app_path: str, analysis: dict, node_version: str) -> str:
     """Generate optimized Dockerfile for NestJS applications."""
+    # Detect start command from package.json
+    start_command = _detect_start_command(app_path)
+    
+    # Determine CMD based on detected start command
+    if start_command and 'start' in start_command:
+        cmd_line = 'CMD npm start'
+    else:
+        cmd_line = 'CMD ["node", "dist/main.js"]'
+    
     return f"""# Multi-stage build for NestJS
 FROM node:{node_version}-alpine AS builder
 
@@ -454,26 +516,38 @@ COPY package*.json ./
 # Use npm ci if package-lock.json exists, otherwise use npm install
 RUN if [ -f package-lock.json ]; then npm ci --only=production; else npm install --production; fi && npm cache clean --force
 
-# Copy built application from builder
+# Copy built application from builder WITH proper ownership
 COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
 
+# Switch to non-root user
 USER nestjs
 
 # Expose port
 EXPOSE {analysis.get('port', 3000)}
 
-# Health check
+# Health check (use 127.0.0.1 instead of localhost)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \\
-    CMD node -e "require('http').get('http://localhost:{analysis.get('port', 3000)}/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
+    CMD node -e "require('http').get('http://127.0.0.1:{analysis.get('port', 3000)}/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
 
-# Start application
-CMD ["node", "dist/main.js"]
+# Start application with detected command from package.json
+{cmd_line}
 """
 
 
 def _generate_express_dockerfile(app_path: str, analysis: dict, node_version: str) -> str:
     """Generate optimized Dockerfile for Express applications."""
-    entry_point = analysis.get('entry_point', 'index.js')
+    entry_point = analysis.get('entry_point', 'index.js') or 'index.js'
+    
+    # Detect start command from package.json
+    start_command = _detect_start_command(app_path)
+    
+    # Determine CMD based on detected start command
+    if start_command:
+        # Use the detected start command
+        cmd_line = f'CMD npm start'
+    else:
+        # Fallback to node with entry point
+        cmd_line = f'CMD ["node", "{entry_point}"]'
     
     return f"""# Multi-stage build for Express
 FROM node:{node_version}-alpine AS builder
@@ -503,20 +577,21 @@ COPY package*.json ./
 # Install production dependencies only - use npm ci if package-lock.json exists, otherwise npm install
 RUN if [ -f package-lock.json ]; then npm ci --only=production && npm cache clean --force; else npm install --production && npm cache clean --force; fi
 
-# Copy application code
+# Copy application code WITH proper ownership BEFORE switching user
 COPY --chown=expressuser:nodejs . .
 
+# Switch to non-root user
 USER expressuser
 
 # Expose port
 EXPOSE {analysis.get('port', 3000)}
 
-# Health check
+# Health check (use 127.0.0.1 instead of localhost)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \\
-    CMD node -e "require('http').get('http://localhost:{analysis.get('port', 3000)}/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
+    CMD node -e "require('http').get('http://127.0.0.1:{analysis.get('port', 3000)}/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
 
-# Start application
-CMD ["node", "{analysis.get('entry_point', 'index.js')}"]
+# Start application with detected command from package.json
+{cmd_line}
 """
 
 
@@ -801,12 +876,22 @@ USER appuser
 
 EXPOSE {analysis.get('port', 8000)}
 
-CMD ["python", "{analysis.get('entry_point', 'main.py')}"]
+CMD ["python", "{analysis.get('entry_point') or 'main.py'}"]
 """
 
 
 def _generate_generic_node_dockerfile(app_path: str, analysis: dict, node_version: str) -> str:
     """Generate generic Node.js Dockerfile."""
+    # Detect start command from package.json
+    start_command = _detect_start_command(app_path)
+    entry_point = analysis.get('entry_point', 'index.js') or 'index.js'
+    
+    # Determine CMD based on detected start command
+    if start_command:
+        cmd_line = 'CMD npm start'
+    else:
+        cmd_line = f'CMD ["node", "{entry_point}"]'
+    
     return f"""FROM node:{node_version}-alpine
 
 WORKDIR /app
@@ -823,7 +908,8 @@ USER nodeuser
 
 EXPOSE {analysis.get('port', 3000)}
 
-CMD ["node", "{analysis.get('entry_point', 'index.js')}"]
+# Use detected start command from package.json
+{cmd_line}
 """
 
 

@@ -309,14 +309,21 @@ class EnhancedApplicationAnalyzer:
             return self.analysis
     
     def _detect_files(self):
-        """Detect all relevant files in the project."""
+        """Detect all relevant files in the project - FAST VERSION."""
         try:
             files = []
-            for item in self.app_path.rglob('*'):
-                if item.is_file() and not any(skip in str(item) for skip in ['.git', '__pycache__', 'node_modules']):
-                    rel_path = item.relative_to(self.app_path)
-                    files.append(str(rel_path))
-            self.analysis['detected_files'] = files[:100]  # Limit for performance
+            # Only scan immediate directory and one level deep for speed
+            for item in self.app_path.glob('*'):
+                if item.is_file():
+                    files.append(item.name)
+            # Check common subdirectories only
+            for subdir in ['src', 'app', 'lib', 'api', 'server']:
+                subpath = self.app_path / subdir
+                if subpath.exists():
+                    for item in subpath.glob('*'):
+                        if item.is_file():
+                            files.append(f"{subdir}/{item.name}")
+            self.analysis['detected_files'] = files[:50]  # Reduced limit for performance
         except Exception:
             self.analysis['detected_files'] = []
     
@@ -385,16 +392,14 @@ class EnhancedApplicationAnalyzer:
             # MASSIVE bonus if this language has root-level package manager
             is_root_language = (root_package_manager == lang)
             
-            # Check if required indicator exists - with better tracking
+            # Check if required indicator exists - FAST VERSION (root only)
             for req_indicator in required_indicators.get(lang, []):
                 if req_indicator.startswith('*.'):
-                    matches = list(self.app_path.glob(f'*{req_indicator[1:]}'))  # Check root first
-                    if not matches:
-                        matches = list(self.app_path.glob(f'**/*{req_indicator[1:]}'))  # Then recursive
+                    # Only check root directory, no recursive scan
+                    matches = list(self.app_path.glob(f'*{req_indicator[1:]}'))
                 else:
-                    matches = list(self.app_path.glob(req_indicator))  # Check root first
-                    if not matches:
-                        matches = list(self.app_path.glob(f'**/{req_indicator}'))  # Then recursive
+                    # Only check root directory, no recursive scan
+                    matches = list(self.app_path.glob(req_indicator))
                 
                 if matches:
                     has_required = True
@@ -416,17 +421,16 @@ class EnhancedApplicationAnalyzer:
                 except:
                     return False
             
-            # Count source code files (EXCLUDING mobile/build directories)
+            # Count source code files (FAST VERSION - limited depth)
             source_file_count = 0
             for indicator in indicators:
                 if indicator.startswith('*.'):
                     ext = indicator[1:]
-                    # Check root directory first
-                    root_matches = [f for f in self.app_path.glob(f'*{ext}') if not should_exclude(f)]
-                    # Then check common source directories
-                    src_matches = [f for f in self.app_path.glob(f'src/**/*{ext}') if not should_exclude(f)]
-                    app_matches = [f for f in self.app_path.glob(f'app/**/*{ext}') if not should_exclude(f)]
-                    lib_matches = [f for f in self.app_path.glob(f'lib/**/*{ext}') if not should_exclude(f)]
+                    # Only check root and immediate src/app/lib directories (no deep recursion)
+                    root_matches = list(self.app_path.glob(f'*{ext}'))
+                    src_matches = list(self.app_path.glob(f'src/*{ext}')) if (self.app_path / 'src').exists() else []
+                    app_matches = list(self.app_path.glob(f'app/*{ext}')) if (self.app_path / 'app').exists() else []
+                    lib_matches = list(self.app_path.glob(f'lib/*{ext}')) if (self.app_path / 'lib').exists() else []
                     
                     all_matches = root_matches + src_matches + app_matches + lib_matches
                     source_file_count = len(all_matches)
@@ -439,11 +443,9 @@ class EnhancedApplicationAnalyzer:
                         weight = 5 if is_root_language else 2
                         score += min(source_file_count * weight, 100 if is_root_language else 50)
                 else:
-                    # Config files (already counted in required)
+                    # Config files (already counted in required) - FAST VERSION (root only)
                     if indicator not in required_indicators.get(lang, []):
-                        matches = [f for f in self.app_path.glob(indicator) if not should_exclude(f)]
-                        if not matches:
-                            matches = [f for f in self.app_path.glob(f'**/{indicator}') if not should_exclude(f)]
+                        matches = list(self.app_path.glob(indicator))
                         score += len(matches) * 10
             
             if score > 0:
@@ -574,8 +576,11 @@ class EnhancedApplicationAnalyzer:
         return score
     
     def _has_specific_imports(self, imports: List[str]) -> bool:
-        """Check if specific imports exist in code files (case-sensitive)."""
-        code_files = list(self.app_path.glob('**/*.py'))[:20]  # Check up to 20 files
+        """Check if specific imports exist in code files (case-sensitive) - FAST VERSION."""
+        # Only check root directory and src folder, max 10 files
+        code_files = list(self.app_path.glob('*.py'))[:5]
+        if (self.app_path / 'src').exists():
+            code_files += list((self.app_path / 'src').glob('*.py'))[:5]
         
         for code_file in code_files:
             try:
@@ -618,9 +623,12 @@ class EnhancedApplicationAnalyzer:
         return False
     
     def _check_imports(self, imports: List[str]) -> int:
-        """Check for import statements in code files."""
+        """Check for import statements in code files - FAST VERSION."""
         score = 0
-        code_files = list(self.app_path.glob('**/*.py')) + list(self.app_path.glob('**/*.js')) + list(self.app_path.glob('**/*.ts'))
+        # Only check root and src directories, no deep recursion
+        code_files = list(self.app_path.glob('*.py'))[:3] + list(self.app_path.glob('*.js'))[:3] + list(self.app_path.glob('*.ts'))[:3]
+        if (self.app_path / 'src').exists():
+            code_files += list((self.app_path / 'src').glob('*.py'))[:3]
         
         for code_file in code_files[:10]:  # Limit for performance
             try:
